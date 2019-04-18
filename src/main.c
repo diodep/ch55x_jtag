@@ -27,7 +27,7 @@ EP3 Buf 	380 - 3bf
 __xdata __at (0x0000) uint8_t  Ep0Buffer[DEFAULT_ENDP0_SIZE];	   //端点0 OUT&IN缓冲区，必须是偶地址
 __xdata __at (0x0040) uint8_t  Ep4Buffer[MAX_PACKET_SIZE];	  //端点4 OUT接收缓冲区
 __xdata __at (0x0080) uint8_t  Ep1Buffer[MAX_PACKET_SIZE];		//端点1 IN 发送缓冲区
-__xdata __at (0x0300) uint8_t  Ep2Buffer[MAX_PACKET_SIZE];	  //端点2 OUT接收缓冲区
+__xdata __at (0x0300) uint8_t  Ep2Buffer[MAX_PACKET_SIZE * 2];	  //端点2 OUT接收缓冲区
 
 __xdata __at (0x0380) uint8_t  Ep3Buffer[MAX_PACKET_SIZE];		//端点3 IN 发送缓冲区
 
@@ -84,6 +84,14 @@ unsigned char  __code Manuf_Des[] =
 volatile __idata uint8_t USBOutLength = 0;
 volatile __idata uint8_t USBOutPtr = 0;
 volatile __idata uint8_t USBReceived = 0;
+
+volatile __idata uint8_t USBRecvLen_A = 0;
+volatile __idata uint8_t USBRecvLen_B = 0;
+volatile __idata uint8_t USBRecvBuf = 0;
+volatile __idata uint8_t Serial_Done = 0;
+volatile __idata uint8_t USBBufState = 0;
+volatile __idata uint8_t SerialSendBuf = 0;
+volatile __idata uint8_t USB_Require_Data = 0;
 
 volatile __idata uint8_t USBOutLength_1 = 0;
 volatile __idata uint8_t USBOutPtr_1 = 0;
@@ -184,7 +192,9 @@ void USBDeviceEndPointCfg()
 	// TODO: Is casting the right thing here? What about endianness?
 	UEP2_DMA = (uint16_t) Ep2Buffer;											//端点2 OUT接收数据传输地址
 	UEP3_DMA = (uint16_t) Ep3Buffer;
-	UEP2_3_MOD = 0x48;															//端点2 单缓冲接收, 端点3单缓冲发送
+	//UEP2_3_MOD = 0x48;															//端点2 单缓冲接收, 端点3单缓冲发送
+	UEP2_3_MOD = 0x49;				//端点3单缓冲发送,端点2双缓冲接收
+
 	UEP2_CTRL = bUEP_AUTO_TOG | UEP_R_RES_ACK;									//端点2 自动翻转同步标志位，OUT返回ACK
 	UEP3_CTRL = bUEP_AUTO_TOG | UEP_T_RES_NAK; //端点3发送返回NAK
 
@@ -256,21 +266,30 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 			UEP1_CTRL = UEP1_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_NAK;		   //默认应答NAK
 			UpPoint1_Busy = 0;												  //清除忙标志
 			break;
-		case UIS_TOKEN_OUT | 2:												 //endpoint 3# 端点批量下传
+		case UIS_TOKEN_OUT | 2:												 //endpoint 2# 端点批量下传
 			if ( U_TOG_OK )													 // 不同步的数据包将丢弃
 			{
 				UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_NAK;	   //收到一包数据就NAK，主函数处理完，由主函数修改响应方式
 				USBReceived = 1;
-				USBOutPtr = 0;
-				USBOutLength = USB_RX_LEN;
+				if(UEP2_CTRL & bUEP_R_TOG)
+				{
+					USBRecvBuf = 0; //缓冲2
+                    USBRecvLen_A = USB_RX_LEN;
+				}
+				else
+				{
+					USBRecvBuf = 1; //缓冲1
+					USBRecvLen_B = USB_RX_LEN;
+				}
+				USB_Require_Data = 0;
 			}
 			break;
-		case UIS_TOKEN_IN | 3:												  //endpoint 1# 端点批量上传
+		case UIS_TOKEN_IN | 3:												  //endpoint 3# 端点批量上传
 			UEP3_T_LEN = 0;
 			UEP3_CTRL = UEP3_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_NAK;		   //默认应答NAK
 			UpPoint3_Busy = 0;												  //清除忙标志
 			break;
-		case UIS_TOKEN_OUT | 4:												 //endpoint 3# 端点批量下传
+		case UIS_TOKEN_OUT | 4:												 //endpoint 4# 端点批量下传
 			if ( U_TOG_OK )													 // 不同步的数据包将丢弃
 			{
 				UEP4_CTRL ^= bUEP_R_TOG;	//同步标志位翻转
@@ -828,6 +847,14 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 
 		UpPoint1_LenA = 2;
 		UpPoint1_LenB = 2;
+
+		USBRecvLen_A = 0;
+		USBRecvLen_B = 0;
+		USBRecvBuf = 0;
+		SerialSendBuf = 0;
+		USBBufState = 0;
+		Serial_Done = 0;
+		USB_Require_Data = 0;
 	}
 	if (UIF_SUSPEND)																 //USB总线挂起/唤醒完成
 	{
@@ -1007,7 +1034,7 @@ SendToSerial:
 	jc SerialTx
 
 UsbEpAck:
-	anl	_UEP2_CTRL, #0xf3
+	mov _Serial_Done, #1
 	sjmp Tx_End
 SerialTx:
 	mov dph, #(_Ep2Buffer >> 8)
@@ -1291,7 +1318,7 @@ __asm
 	inc _XBUS_AUX
 	movx @dptr, a
 	inc dpl
-	dec _XBUS_AUX
+	dec _XBUS_AUXUSBBufState
 
 	djnz r6, 114810$
 __endasm;
@@ -1313,10 +1340,100 @@ __endasm;
 #endif
 			if(USBReceived) //IDLE状态
 			{
+				if(USBRecvBuf == 0)
+				{
+					USBBufState |= 0x01;
+					if(Serial_Done == 0) //串口IDLE
+					{
+						Serial_Done = 2; //串口发送中
+						SerialSendBuf = 0;
+						EA = 0;
+						USBOutPtr = 0;
+						USBOutLength = USBRecvLen_A;
+						EA = 1;
+						TI = 1;
+					}
+					if((USBBufState & 0x02) == 0)
+					{
+						if(UEP2_CTRL & MASK_UEP_R_RES != UEP_R_RES_ACK)
+							UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
+					}
+				}
+				if(USBRecvBuf == 1)
+				{
+					USBBufState |= 0x02;
+					if(Serial_Done == 0) //串口IDLE
+					{
+						Serial_Done = 2; //串口发送中
+						SerialSendBuf = 1;
+						EA = 0;
+						USBOutPtr = 64;
+						USBOutLength = USBRecvLen_B + 64;
+						EA = 1;
+						TI = 1;
+					}
+					if((USBBufState & 0x01) == 0)
+					{
+						if(UEP2_CTRL & MASK_UEP_R_RES != UEP_R_RES_ACK)
+							UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
+					}
+				}
 				USBReceived = 0;
-				TI = 1; //触发串口中断
 			}
-
+			if(Serial_Done == 1)
+			{
+                 if(SerialSendBuf == 0)
+				 {
+				 	if((USBBufState & 0x02) != 0) //B缓冲区有数据
+					{
+						Serial_Done = 2; //串口发送中
+						SerialSendBuf = 1;
+						EA = 0;
+						USBOutPtr = 64;
+						USBOutLength = USBRecvLen_B + 64;
+						EA = 1;
+						TI = 1;
+					}
+					USBBufState &= ~(0x01); //A缓冲区数据清除
+				 }
+				 if(SerialSendBuf == 1)
+				 {
+				 	if((USBBufState & 0x01) != 0) //A缓冲区有数据
+					{
+						Serial_Done = 2; //串口发送中
+						SerialSendBuf = 0;
+						EA = 0;
+						USBOutPtr = 0;
+						USBOutLength = USBRecvLen_A;
+						EA = 1;
+						TI = 1;
+					}
+				 	USBBufState &= ~(0x02);
+				 }
+				Serial_Done = 0;
+				//if(UEP2_CTRL & MASK_UEP_R_RES != UEP_R_RES_ACK)
+				UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
+				//
+			}
+			/*
+			if(Serial_Done == 2 && USB_Require_Data == 0)
+			{
+				if(SerialSendBuf == 0)
+				{
+					if((USBBufState & 0x02) == 0)
+					{
+						UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
+					}
+				}
+				if(SerialSendBuf == 1)
+				{
+					if((USBBufState & 0x01) == 0)
+					{
+						UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
+					}
+				}
+			}
+			*/
 			if(USBReceived_1)
 			{
 				USBReceived_1 = 0;
@@ -1402,5 +1519,4 @@ __endasm;
 #endif
 	}
 }
-
 
