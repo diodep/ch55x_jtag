@@ -245,6 +245,9 @@ void uuidcpy(__xdata uint8_t *dest, uint8_t index, uint8_t len) /* 使用UUID生
 #define INTF2_DTR	TIN3
 #define INTF2_RTS	TIN2
 
+volatile __idata uint8_t DTR_State = 0;
+volatile __idata uint8_t Modem_Count = 0;
+
 /*******************************************************************************
 * Function Name  : DeviceInterrupt()
 * Description	: CH559USB中断处理函数
@@ -256,6 +259,27 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 	if ((USB_INT_ST & MASK_UIS_TOKEN) == UIS_TOKEN_SOF)
 	{
 		SOF_Count ++;
+		if(Modem_Count)
+			Modem_Count --;
+        if(Modem_Count == 1)
+		{
+			if(soft_dtr == 0 && soft_rts == 1)
+			{
+				INTF1_RTS = 1;
+				INTF1_DTR = 0;
+			}
+			if(soft_dtr == 1 && soft_rts == 0)
+			{
+				INTF1_RTS = 0;
+				INTF1_DTR = 1;
+			}
+			if(soft_dtr == soft_rts)
+			{
+				INTF1_DTR = 1;
+				INTF1_RTS = 0;
+				INTF1_RTS = 1;
+			}
+		}
 	}
 	if(UIF_TRANSFER)															//USB传输完成标志
 	{
@@ -454,6 +478,8 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 										//INTF1_RTS = 1;
 									}
 								}
+								Modem_Count = 20;
+								/*
 								if(soft_dtr == soft_rts) // Taken from Open-EC
 								{
 									INTF1_DTR = 1;
@@ -461,14 +487,14 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 								}
 								if(soft_dtr == 1 && soft_rts == 0)
 								{
-									INTF1_RTS = 0;
-									INTF1_DTR = 1;
-								}
-								if(soft_dtr == 0 && soft_rts == 1)
-								{
 									INTF1_RTS = 1;
 									INTF1_DTR = 0;
 								}
+								if(soft_dtr == 0 && soft_rts == 1)
+								{
+									INTF1_RTS = 0;
+									INTF1_DTR = 1;
+								}*/
 							}
 							else //intf2
 							{
