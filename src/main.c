@@ -106,6 +106,7 @@ volatile __idata uint8_t UpPoint3_Busy = 0;   //上传端点是否忙标志
 /* 杂项 */
 volatile __idata uint16_t SOF_Count = 0;
 volatile __idata uint8_t Latency_Timer = 4; //Latency Timer
+volatile __idata uint8_t Latency_Timer1 = 4;
 volatile __idata uint8_t Require_DFU = 0;
 
 /* 流控 */
@@ -346,7 +347,10 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 							len = 2;
 							break;
 						case 0x0a:
-							Ep0Buffer[0] = Latency_Timer;
+							if(UsbSetupBuf->wIndexL == 2)
+								Ep0Buffer[0] = Latency_Timer1;
+							else
+								Ep0Buffer[0] = Latency_Timer;
 							len = 1;
 							break;
 						case 0x05:
@@ -377,13 +381,20 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 							len = 0;
 							break;
 						case 0x00:
-							UpPoint1_Busy = 0;
-							UpPoint3_Busy = 0;
-							UEP4_CTRL &= ~(bUEP_R_TOG);
+							if(UsbSetupBuf->wIndexL == 1)
+								UpPoint1_Busy = 0;
+							if(UsbSetupBuf->wIndexL == 2)
+							{
+								UpPoint3_Busy = 0;
+								UEP4_CTRL &= ~(bUEP_R_TOG);
+							}
 							len = 0;
 							break;
 						case 0x09: //SET LATENCY TIMER
-							Latency_Timer = UsbSetupBuf->wValueL;
+							if(UsbSetupBuf->wIndexL == 1)
+								Latency_Timer = UsbSetupBuf->wValueL;
+							else
+								Latency_Timer1 = UsbSetupBuf->wValueL;
 							len = 0;
 							break;
 						case 0x03:
@@ -1155,6 +1166,7 @@ main()
 {
 	uint8_t i;
 	volatile uint16_t Uart_Timeout = 0;
+	volatile uint16_t Uart_Timeout1 = 0;
 	uint16_t Esp_Stage = 0;
 	int8_t size;
 
@@ -1312,9 +1324,9 @@ __endasm;
 
 
 				}
-				else if((uint16_t) (SOF_Count - Uart_Timeout) >= Latency_Timer) //超时
+				else if((uint16_t) (SOF_Count - Uart_Timeout1) >= Latency_Timer1) //超时
 				{
-					Uart_Timeout = SOF_Count;
+					Uart_Timeout1 = SOF_Count;
 					if(size > 62) size = 62;
 #ifndef	FAST_COPY_2
 					for(i = 0; i < (uint8_t)size; i++)
