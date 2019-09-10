@@ -1,4 +1,4 @@
-TARGET = usb_dualser
+TARGET = usb_jtag
 
 # Adjust the XRAM location and size to leave space for the USB DMA buffers
 # Buffer layout in XRAM:
@@ -10,7 +10,7 @@ TARGET = usb_dualser
 XRAM_SIZE = 0x0300
 XRAM_LOC = 0x0100
 
-FREQ_SYS = 24000000
+FREQ_SYS = 16000000
 
 EXTRA_FLAGS = --opt-code-speed
 

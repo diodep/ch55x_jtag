@@ -3,7 +3,7 @@
 * Author			 : Kongou Hikari
 * Version			: V1.0
 * Date			   : 2019/02/16
-* Description		: CH552 USB to Serial with FTDI Protocol
+* Description		: CH552 USB to JTAG with FTDI Protocol
 *******************************************************************************/
 #include <stdint.h>
 #include <stdio.h>
@@ -18,22 +18,18 @@ Memory map:
 EP0 Buf		00 - 3f
 EP4 Buf 	40 - 7f
 EP1 Buf		80 - bf
-RingBuf1	100 - 1ff
-RingBuf2	200 - 2ff
+
 EP2 Buf		300 - 33f
 EP3 Buf 	380 - 3bf
 */
 
 __xdata __at (0x0000) uint8_t  Ep0Buffer[DEFAULT_ENDP0_SIZE];	   //端点0 OUT&IN缓冲区，必须是偶地址
-__xdata __at (0x0040) uint8_t  Ep4Buffer[MAX_PACKET_SIZE];	  //端点4 OUT接收缓冲区
+
 __xdata __at (0x0080) uint8_t  Ep1Buffer[MAX_PACKET_SIZE];		//端点1 IN 发送缓冲区
 __xdata __at (0x0300) uint8_t  Ep2Buffer[MAX_PACKET_SIZE * 2];	  //端点2 OUT接收缓冲区
 
 __xdata __at (0x0380) uint8_t  Ep3Buffer[MAX_PACKET_SIZE];		//端点3 IN 发送缓冲区
-
-
-__xdata __at (0x0100) uint8_t  RingBuf[128];
-__xdata __at (0x0200) uint8_t  RingBuf_1[128];
+__xdata __at (0x0040) uint8_t  Ep4Buffer[MAX_PACKET_SIZE];	  //端点4 OUT接收缓冲区
 
 
 uint16_t SetupLen;
@@ -56,10 +52,10 @@ __code uint8_t CfgDesc[] =
 	0x09, 0x02, sizeof(CfgDesc) & 0xff, sizeof(CfgDesc) >> 8,
 	0x02, 0x01, 0x00, 0x80, 0x32,		 //配置描述符（1个接口）
 	//以下为接口0（数据接口）描述符
-	0x09, 0x04, 0x00, 0x00, 0x02, 0xff, 0xff, 0xff, 0x00,	 //数据接口描述符
+	0x09, 0x04, 0x00, 0x00, 0x02, 0xff, 0xff, 0xff, 0x03,	 //数据接口描述符
 	0x07, 0x05, 0x81, 0x02, 0x40, 0x00, 0x00,				 //端点描述符 EP1 BULK IN
 	0x07, 0x05, 0x02, 0x02, 0x40, 0x00, 0x00,				 //端点描述符 EP2 BULK OUT
-	//以下为接口01（数据接口）描述符
+	//以下为接口1（数据接口）描述符
 	0x09, 0x04, 0x01, 0x00, 0x02, 0xff, 0xff, 0xff, 0x00,	 //数据接口描述符
 	0x07, 0x05, 0x83, 0x02, 0x40, 0x00, 0x00,				 //端点描述符 EP3 BULK IN
 	0x07, 0x05, 0x04, 0x02, 0x40, 0x00, 0x00,				 //端点描述符 EP4 BULK OUT
@@ -71,7 +67,13 @@ unsigned char  __code Prod_Des[] =								//产品字符串描述符
 {
 	sizeof(Prod_Des), 0x03,
 	'S', 0x00, 'i', 0x00, 'p', 0x00, 'e', 0x00, 'e', 0x00, 'd', 0x00,
-	'-', 0x00, 'D', 0x00, 'e', 0x00, 'b', 0x00, 'u', 0x00, 'g', 0x00
+	'-', 0x00, 'U', 0x00, 'A', 0x00, 'R', 0x00, 'T', 0x00,
+};
+unsigned char  __code Jtag_Des[] =								//产品字符串描述符
+{
+	sizeof(Jtag_Des), 0x03,
+	'S', 0x00, 'i', 0x00, 'p', 0x00, 'e', 0x00, 'e', 0x00, 'd', 0x00,
+	'-', 0x00, 'J', 0x00, 'T', 0x00, 'A', 0x00, 'G', 0x00
 };
 unsigned char  __code Manuf_Des[] =
 {
@@ -109,12 +111,6 @@ volatile __idata uint8_t Latency_Timer = 4; //Latency Timer
 volatile __idata uint8_t Latency_Timer1 = 4;
 volatile __idata uint8_t Require_DFU = 0;
 
-/* 流控 */
-volatile __idata uint8_t soft_dtr = 0;
-volatile __idata uint8_t soft_rts = 0;
-
-volatile __idata uint8_t soft_dtr_1 = 0;
-volatile __idata uint8_t soft_rts_1 = 0;
 
 #define HARD_ESP_CTRL 1
 
@@ -240,15 +236,6 @@ void uuidcpy(__xdata uint8_t *dest, uint8_t index, uint8_t len) /* 使用UUID生
 	}
 }
 
-#define INTF1_DTR	TIN1
-#define INTF1_RTS	TIN0
-
-#define INTF2_DTR	TIN3
-#define INTF2_RTS	TIN2
-
-volatile __idata uint8_t DTR_State = 0;
-volatile __idata uint8_t Modem_Count = 0;
-
 /*******************************************************************************
 * Function Name  : DeviceInterrupt()
 * Description	: CH559USB中断处理函数
@@ -260,27 +247,6 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 	if ((USB_INT_ST & MASK_UIS_TOKEN) == UIS_TOKEN_SOF)
 	{
 		SOF_Count ++;
-		if(Modem_Count)
-			Modem_Count --;
-        if(Modem_Count == 1)
-		{
-			if(soft_dtr == 0 && soft_rts == 1)
-			{
-				INTF1_RTS = 1;
-				INTF1_DTR = 0;
-			}
-			if(soft_dtr == 1 && soft_rts == 0)
-			{
-				INTF1_RTS = 0;
-				INTF1_DTR = 1;
-			}
-			if(soft_dtr == soft_rts)
-			{
-				INTF1_DTR = 1;
-				INTF1_RTS = 0;
-				INTF1_RTS = 1;
-			}
-		}
 	}
 	if(UIF_TRANSFER)															//USB传输完成标志
 	{
@@ -399,172 +365,9 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 							break;
 						case 0x03:
 							//divisor = wValue
-							U1SMOD = 1;
-							PCON |= SMOD; //波特率加倍
-							T2MOD |= bTMR_CLK; //最高计数时钟
-
-							divisor = UsbSetupBuf->wValueL |
-									  (UsbSetupBuf->wValueH << 8);
-							divisor &= 0x3fff; //没法发生小数取整数部分，baudrate = 48M/16/divisor
-
-
-							if(divisor == 0 || divisor == 1)
-							{
-								if(UsbSetupBuf->wIndexL == 1)
-									TH1 = 0xff; //实在憋不出来1.5M
-								else
-									SBAUD1 = 0xff;
-							}
-							else
-							{
-								divisor = divisor / 2; //24M CPU时钟
-								if(divisor > 256)
-								{
-									//TH1 = 0 - 13; //统统115200
-									if(UsbSetupBuf->wIndexL == 1)
-									{
-										divisor /= 8;
-										if(divisor > 256)
-										{
-											TH1 = 0 - 13;
-										}
-										else
-										{
-											PCON &= ~(SMOD);
-											T2MOD &= ~(bTMR_CLK); //低波特率
-											TH1 = 0 - divisor;
-										}
-									}
-									else //intf2
-									{
-										divisor /= 2;
-										if(divisor > 256)
-										{
-											SBAUD1 = 0 - 13;
-										}
-										else
-										{
-											U1SMOD = 0;
-											SBAUD1 = 0 - divisor;
-										}
-									}
-								}
-								else
-								{
-									if(UsbSetupBuf->wIndexL == 1)
-										TH1 = 0 - divisor;
-									else //intf2
-										SBAUD1 = 0 - divisor;
-								}
-							}
 							len = 0;
 							break;
 						case 0x01: //MODEM Control
-#if HARD_ESP_CTRL
-							if(UsbSetupBuf->wIndexL == 1)
-							{
-								if(UsbSetupBuf->wValueH & 0x01)
-								{
-									if(UsbSetupBuf->wValueL & 0x01) //DTR
-									{
-										soft_dtr = 1;
-										//INTF1_DTR = 0;
-									}
-									else
-									{
-										soft_dtr = 0;
-										//INTF1_DTR = 1;
-									}
-								}
-								if(UsbSetupBuf->wValueH & 0x02)
-								{
-									if(UsbSetupBuf->wValueL & 0x02) //RTS
-									{
-										soft_rts = 1;
-										//INTF1_RTS = 0;
-									}
-									else
-									{
-										soft_rts = 0;
-										//INTF1_RTS = 1;
-									}
-								}
-								Modem_Count = 20;
-								/*
-								if(soft_dtr == soft_rts) // Taken from Open-EC
-								{
-									INTF1_DTR = 1;
-									INTF1_RTS = 1;
-								}
-								if(soft_dtr == 1 && soft_rts == 0)
-								{
-									INTF1_RTS = 1;
-									INTF1_DTR = 0;
-								}
-								if(soft_dtr == 0 && soft_rts == 1)
-								{
-									INTF1_RTS = 0;
-									INTF1_DTR = 1;
-								}*/
-							}
-							else //intf2
-							{
-								if(UsbSetupBuf->wValueH & 0x01)
-								{
-									if(UsbSetupBuf->wValueL & 0x01) //DTR
-									{
-										soft_dtr_1 = 1;
-										//INTF2_DTR = 0;
-									}
-									else
-									{
-										soft_dtr_1 = 0;
-										//INTF2_DTR = 1;
-									}
-								}
-								if(UsbSetupBuf->wValueH & 0x02)
-								{
-									if(UsbSetupBuf->wValueL & 0x02) //RTS
-									{
-										soft_rts_1 = 1;
-										//INTF2_RTS = 0;
-									}
-									else
-									{
-										soft_rts_1 = 0;
-										//INTF2_RTS = 1;
-									}
-
-									if(soft_dtr_1 == 1 && soft_rts_1 == 1)
-									{
-										INTF2_DTR = 1;
-										INTF2_RTS = 1;
-									}
-									if(soft_dtr_1 == 0 && soft_rts_1 == 0)
-									{
-										INTF2_DTR = 1;
-										INTF2_RTS = 1;
-									}
-									if(soft_dtr_1 == 0 && soft_rts_1 == 1)
-									{
-										INTF2_DTR = 1;
-										INTF2_RTS = 0;
-									}
-									if(soft_dtr_1 == 1 && soft_rts_1 == 0)
-									{
-										INTF2_DTR = 0;
-										INTF2_RTS = 1;
-									}
-
-								}
-							}
-#else
-							if(Esp_Require_Reset == 3)
-							{
-								CAP1 = 0;
-								Esp_Require_Reset = 4;
-							}
-#endif
 							len = 0;
 							break;
 						default:
@@ -604,6 +407,11 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 							{
 								pDescr = Prod_Des;
 								len = sizeof(Prod_Des);
+							}
+							else if(UsbSetupBuf->wValueL == 3)
+							{
+								pDescr = Jtag_Des;
+								len = sizeof(Jtag_Des);
 							}
 							else
 							{
@@ -958,208 +766,28 @@ void SerialPort_Config()
 	IP_EX |= bIP_UART1;
 }
 
-
-/*******************************************************************************
-* Function Name  : Uart0_ISR()
-* Description	: 串口接收中断函数，实现循环缓冲接收
-*******************************************************************************/
-
-//Ring Buf
-
-volatile __idata uint8_t WritePtr = 0;
-volatile __idata uint8_t ReadPtr = 0;
-
-volatile __idata uint8_t WritePtr_1 = 0;
-volatile __idata uint8_t ReadPtr_1 = 0;
-#ifndef HARD_ESP_CTRL
-__code uint8_t ESP_Boot_Sequence[] =
+void Xtal_Enable(void) //使能外部时钟
 {
-	0x07, 0x07, 0x12, 0x20,
-	0x55, 0x55, 0x55, 0x55,
-	0x55, 0x55, 0x55, 0x55,
-	0x55, 0x55, 0x55, 0x55,
-	0x55, 0x55, 0x55, 0x55
-};
-#endif
-
-#define FAST_RECEIVE
-
-#ifndef FAST_RECEIVE /* 年久失修的代码,不要维护了 */
-void Uart0_ISR(void) __interrupt (INT_NO_UART0) __using 1
-{
-	if(RI)   //收到数据
-	{
-		if((WritePtr + 1) % sizeof(RingBuf) != ReadPtr)
-		{
-			//环形缓冲写
-			RingBuf[WritePtr++] = SBUF;
-			WritePtr %= sizeof(RingBuf);
-		}
-		RI = 0;
-	}
-	if (TI)
-	{
-		if(USBOutPtr >= USBOutLength)
-		{
-			UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
-			TI = 0;
-		}
-		else
-		{
-			uint8_t ch = Ep2Buffer[USBOutPtr];
-			SBUF = ch;
-			TI = 0;
-#ifndef HARD_ESP_CTRL
-			if(ESP_Boot_Sequence[Esp_Boot_Chk] == ch)
-				Esp_Boot_Chk ++;
-			else
-				Esp_Boot_Chk = 0;
-
-			if(Esp_Boot_Chk >= (sizeof(ESP_Boot_Sequence) - 1))
-			{
-				if(Esp_Require_Reset == 0)
-					Esp_Require_Reset = 1;
-				Esp_Boot_Chk = 0;
-			}
-#endif
-			USBOutPtr++;
-		}
-	}
-
-}
-#else
-//汇编接收数据，选择寄存器组1，DPTR1 1.5M~150kHz~160 cycles
-
-void Uart0_ISR(void) __interrupt (INT_NO_UART0) __using 1 __naked
-{
-	__asm
-	push psw ;2
-	push a
-	push dph
-	push dpl
-
-ReadFromSerial:
-	jnb _RI, SendToSerial ;7
-
-	mov a, _WritePtr ;2
-	mov dpl, _ReadPtr
-
-	inc a ;1
-	anl dpl, #0x7f
-	anl a, #0x7f ;2
-
-	xrl a, dpl
-	jz SendToSerial
-
-	mov dph, #(_RingBuf >> 8) ;3
-	mov dpl, _WritePtr ;3
-	mov a, _SBUF ;2
-	movx @dptr, a ;1
-
-	inc _WritePtr ;1
-	anl _WritePtr, #0x7f ;2
-
-
-SendToSerial:
-	clr _RI ;2
-
-	jnb _TI, ISR_End
-
-	clr c
-	mov a, _USBOutPtr
-	subb a, _USBOutLength
-	jc SerialTx
-
-UsbEpAck:
-	mov _Serial_Done, #1
-	sjmp Tx_End
-SerialTx:
-	mov dph, #(_Ep2Buffer >> 8)
-	mov dpl, _USBOutPtr
-	movx a, @dptr
-	mov _SBUF, a
-	inc _USBOutPtr
-
-Tx_End:
-	clr _TI
-
-ISR_End:
-
-	pop dpl
-	pop dph
-	pop a
-	pop psw
-	reti
-	__endasm;
+	SAFE_MOD = 0x55;
+	SAFE_MOD = 0xAA;
+	CLOCK_CFG |= bOSC_EN_XT;                          //使能外部24M晶振
+	SAFE_MOD = 0x00;
+	mDelaymS(5);
+	SAFE_MOD = 0x55;
+	SAFE_MOD = 0xAA;
+	CLOCK_CFG &= ~bOSC_EN_INT;                        //关闭内部RC
+	SAFE_MOD = 0x00;
 }
 
-//汇编接收数据，选择寄存器组1，DPTR1 1.5M~150kHz~160 cycles
-void Uart1_ISR(void) __interrupt (INT_NO_UART1) __using 1 __naked
+void CLKO_Enable(void) //打开T2输出
 {
-	__asm
-	push psw ;2
-	push a
-	push dph
-	push dpl
-
-ReadFromSerial_1:
-	jnb _U1RI, SendToSerial_1 ;7
-
-	mov a, _WritePtr_1 ;2
-	mov dpl, _ReadPtr_1
-
-	inc a ;1
-	anl dpl, #0x7f
-	anl a, #0x7f ;2
-
-	xrl a, dpl
-	jz SendToSerial_1
-
-	mov dph, #(_RingBuf_1 >> 8) ;3
-	mov dpl, _WritePtr_1 ;3
-	mov a, _SBUF1 ;2
-	movx @dptr, a ;1
-
-	inc _WritePtr_1 ;1
-	anl _WritePtr_1, #0x7f ;2
-
-
-SendToSerial_1:
-	clr _U1RI ;2
-
-	jnb _U1TI, ISR_End_1
-
-	clr c
-	mov a, _USBOutPtr_1
-	subb a, _USBOutLength_1
-	jc SerialTx_1
-
-UsbEpAck_1:
-	anl	_UEP4_CTRL, #0xf3
-	sjmp Tx_End_1
-SerialTx_1:
-	mov dph, #(_Ep4Buffer >> 8)
-	mov dpl, _USBOutPtr_1
-	movx a, @dptr
-	mov _SBUF1, a
-	inc _USBOutPtr_1
-
-Tx_End_1:
-	clr _U1TI
-
-ISR_End_1:
-
-	pop dpl
-	pop dph
-	pop a
-	pop psw
-	reti
-	__endasm;
+	ET2 = 0;
+	T2MOD |= bTMR_CLK | bT2_CLK | T2OE;
+	RCAP2H = 0xff;
+	RCAP2L = 0xff;
+	T2CON |= TR2;
+	P1_MOD_OC &= ~(0x01); //P1.0推挽输出
 }
-#endif
-
-//#define FAST_COPY_2
-//#define FAST_COPY_1
 
 //主函数
 main()
@@ -1170,9 +798,12 @@ main()
 	uint16_t Esp_Stage = 0;
 	int8_t size;
 
-	CfgFsys( );														   //CH559时钟选择配置
-	mDelaymS(5);														  //修改主频等待内部晶振稳定,必加
-	SerialPort_Config();
+	
+	Xtal_Enable();	//启动振荡器
+	CfgFsys( );														   //CH552时钟选择配置
+	mDelaymS(5);														  //修改主频等待内部时钟稳定,必加
+	CLKO_Enable();
+
 #ifdef DE_PRINTF
 	printf("start ...\n");
 #endif
@@ -1195,129 +826,55 @@ main()
 		{
 			if(UpPoint1_Busy == 0)
 			{
-				size = WritePtr - ReadPtr;
-				if(size < 0) size = size + sizeof(RingBuf); //求余数
+				size = 0;
 
 				if(size >= 62)
 				{
-					//i ~ r6, size ~ r7
-#ifndef	FAST_COPY_1
+				#if 0
 					for(i = 0; i < 62; i++)
 					{
 						Ep1Buffer[2 + i] = RingBuf[ReadPtr++];
 						ReadPtr %= sizeof(RingBuf);
 					}
-#else
-__asm
-	mov _XBUS_AUX, #1
-	mov dph, #0x00
-	mov dpl, #0x82
-	dec _XBUS_AUX
-	mov dph, #(_RingBuf >> 8)
-	mov dpl, _ReadPtr
+				#endif
 
-	mov r6, #62
-114514$:
-
-	movx a, @dptr
-	inc _ReadPtr
-	anl _ReadPtr, #0x7f
-	mov dpl, _ReadPtr
-
-	inc _XBUS_AUX
-	movx @dptr, a
-	inc dpl
-	dec _XBUS_AUX
-
-	djnz r6, 114514$
-__endasm;
-#endif
 					UpPoint1_Busy = 1;
 					UEP1_T_LEN = 64;
 					UEP1_CTRL = UEP1_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_ACK;
-
 
 				}
 				else if((uint16_t) (SOF_Count - Uart_Timeout) >= Latency_Timer) //超时
 				{
 					Uart_Timeout = SOF_Count;
 					if(size > 62) size = 62;
-#ifndef	FAST_COPY_1
+				#if 0
 					for(i = 0; i < (uint8_t)size; i++)
 					{
 						Ep1Buffer[2 + i] = RingBuf[ReadPtr++];
 						ReadPtr %= sizeof(RingBuf);
 					}
-#else
-__asm
-	mov _XBUS_AUX, #1
-	mov dph, #0x00
-	mov dpl, #0x82
-	dec _XBUS_AUX
-	mov dph, #(_RingBuf >> 8)
-	mov dpl, _ReadPtr
+				#endif
 
-	mov a, r7
-	mov r6, a
-1919810$:
-
-	movx a, @dptr
-	inc _ReadPtr
-	anl _ReadPtr, #0x7f
-	mov dpl, _ReadPtr
-
-	inc _XBUS_AUX
-	movx @dptr, a
-	inc dpl
-	dec _XBUS_AUX
-
-	djnz r6, 1919810$
-__endasm;
-#endif
 					UpPoint1_Busy = 1;
 					UEP1_T_LEN = 2 + size;
 					UEP1_CTRL = UEP1_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_ACK;			//应答ACK
 				}
 			}
-#if 1 //IF2
+
 			if(UpPoint3_Busy == 0)
 			{
-				size = WritePtr_1 - ReadPtr_1;
-				if(size < 0) size = size + sizeof(RingBuf_1); //求余数
+				size = 0;
 
 				if(size >= 62)
 				{
-#ifndef	FAST_COPY_2
+				#if 0
 					for(i = 0; i < 62; i++)
 					{
 						Ep3Buffer[2 + i] = RingBuf_1[ReadPtr_1++];
 						ReadPtr_1 %= sizeof(RingBuf_1);
 					}
-#else
-__asm
-	mov _XBUS_AUX, #1
-	mov dph, #0x03
-	mov dpl, #0x82
-	dec _XBUS_AUX
-	mov dph, #(_RingBuf_1 >> 8)
-	mov dpl, _ReadPtr_1
+				#endif
 
-	mov r6, #62
-8101919$:
-
-	movx a, @dptr
-	inc _ReadPtr_1
-	anl _ReadPtr_1, #0x7f
-	mov dpl, _ReadPtr_1
-
-	inc _XBUS_AUX
-	movx @dptr, a
-	inc dpl
-	dec _XBUS_AUX
-
-	djnz r6, 8101919$
-__endasm;
-#endif
 					UpPoint3_Busy = 1;
 					UEP3_T_LEN = 64;
 					UEP3_CTRL = UEP3_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_ACK;
@@ -1328,154 +885,18 @@ __endasm;
 				{
 					Uart_Timeout1 = SOF_Count;
 					if(size > 62) size = 62;
-#ifndef	FAST_COPY_2
+				#if 0
 					for(i = 0; i < (uint8_t)size; i++)
 					{
 						Ep3Buffer[2 + i] = RingBuf_1[ReadPtr_1++];
 						ReadPtr_1 %= sizeof(RingBuf_1);
 					}
+				#endif
 
-#else
-__asm
-	mov _XBUS_AUX, #1
-	mov dph, #0x03
-	mov dpl, #0x82
-	dec _XBUS_AUX
-	mov dph, #(_RingBuf_1 >> 8)
-	mov dpl, _ReadPtr_1
-
-	mov a, r7
-	mov r6, a
-114810$:
-
-	movx a, @dptr
-	inc _ReadPtr_1
-	anl _ReadPtr_1, #0x7f
-	mov dpl, _ReadPtr_1
-
-	inc _XBUS_AUX
-	movx @dptr, a
-	inc dpl
-	dec _XBUS_AUXUSBBufState
-
-	djnz r6, 114810$
-__endasm;
-/*
-
-	inc _XBUS_AUX
-	movx @dptr, a
-	inc dpl
-	dec _XBUS_AUX
-
-	.db #0xa5
-*/
-#endif
 					UpPoint3_Busy = 1;
 					UEP3_T_LEN = 2 + size;
 					UEP3_CTRL = UEP3_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_ACK;			//应答ACK
 				}
-			}
-#endif
-			if(USBReceived) //IDLE状态
-			{
-				if(USBRecvBuf == 0)
-				{
-					USBBufState |= 0x01;
-					if(Serial_Done == 0) //串口IDLE
-					{
-						Serial_Done = 2; //串口发送中
-						SerialSendBuf = 0;
-						EA = 0;
-						USBOutPtr = 0;
-						USBOutLength = USBRecvLen_A;
-						EA = 1;
-						TI = 1;
-					}
-					if((USBBufState & 0x02) == 0)
-					{
-						if(UEP2_CTRL & MASK_UEP_R_RES != UEP_R_RES_ACK)
-							UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
-					}
-				}
-				if(USBRecvBuf == 1)
-				{
-					USBBufState |= 0x02;
-					if(Serial_Done == 0) //串口IDLE
-					{
-						Serial_Done = 2; //串口发送中
-						SerialSendBuf = 1;
-						EA = 0;
-						USBOutPtr = 64;
-						USBOutLength = USBRecvLen_B + 64;
-						EA = 1;
-						TI = 1;
-					}
-					if((USBBufState & 0x01) == 0)
-					{
-						if(UEP2_CTRL & MASK_UEP_R_RES != UEP_R_RES_ACK)
-							UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
-					}
-				}
-				USBReceived = 0;
-			}
-			if(Serial_Done == 1)
-			{
-                 if(SerialSendBuf == 0)
-				 {
-				 	if((USBBufState & 0x02) != 0) //B缓冲区有数据
-					{
-						Serial_Done = 2; //串口发送中
-						SerialSendBuf = 1;
-						EA = 0;
-						USBOutPtr = 64;
-						USBOutLength = USBRecvLen_B + 64;
-						EA = 1;
-						TI = 1;
-					}
-					USBBufState &= ~(0x01); //A缓冲区数据清除
-				 }
-				 if(SerialSendBuf == 1)
-				 {
-				 	if((USBBufState & 0x01) != 0) //A缓冲区有数据
-					{
-						Serial_Done = 2; //串口发送中
-						SerialSendBuf = 0;
-						EA = 0;
-						USBOutPtr = 0;
-						USBOutLength = USBRecvLen_A;
-						EA = 1;
-						TI = 1;
-					}
-				 	USBBufState &= ~(0x02);
-				 }
-				Serial_Done = 0;
-				//if(UEP2_CTRL & MASK_UEP_R_RES != UEP_R_RES_ACK)
-				UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
-				//
-			}
-			/*
-			if(Serial_Done == 2 && USB_Require_Data == 0)
-			{
-				if(SerialSendBuf == 0)
-				{
-					if((USBBufState & 0x02) == 0)
-					{
-						UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
-					}
-				}
-				if(SerialSendBuf == 1)
-				{
-					if((USBBufState & 0x01) == 0)
-					{
-						UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
-					}
-				}
-			}
-			*/
-			if(USBReceived_1)
-			{
-				USBReceived_1 = 0;
-				U1TI = 1;
 			}
 
 			if(Require_DFU)
@@ -1483,78 +904,6 @@ __endasm;
 				Require_DFU = 0;
 				Jump_to_BL();
 			}
-#ifndef HARD_ESP_CTRL
-			if(Esp_Require_Reset == 1)
-			{
-				//if(TH1 == 13)
-				//{
-				Esp_Require_Reset = 2;
-				Esp_Stage = SOF_Count;
-				//}
-				//else
-				//{
-				//	Esp_Require_Reset = 0;
-				//}
-			}
-
-			if(Esp_Require_Reset == 2)
-			{
-				if((uint16_t)(SOF_Count - Esp_Stage) == 1)
-				{
-					TXD1 = 1; //IO0
-					CAP1 = 0;
-				}
-				if((uint16_t)(SOF_Count - Esp_Stage) == 2)
-				{
-					TXD1 = 0;
-					CAP1 = 1; //EN high
-				}
-				if((uint16_t)(SOF_Count - Esp_Stage) >= 3)
-				{
-					TXD1 = 1;
-				}
-				if((uint16_t)(SOF_Count - Esp_Stage) >= 1000)
-				{
-					Esp_Require_Reset = 3;
-				}
-			}
-			if(Esp_Require_Reset == 4)
-			{RingBuf
-				Esp_Require_Reset = 0;
-				CAP1 = 1;
-			}
-#endif
-
-
-
 		}
-
-#if 0
-		if(UartByteCount)
-			Uart_Timeout++;
-		if(!UpPoint2_Busy)   //端点不繁忙（空闲后的第一包数据，只用作触发上传）
-		{
-			length = UartByteCount;
-			if(length > 0)
-			{
-				if(length > 39 || Uart_Timeout > 100)
-				{
-					Uart_Timeout = 0;
-					if(Uart_Output_Point + length > UART_REV_LEN)
-						length = UART_REV_LEN - Uart_Output_Point;
-					UartByteCount -= length;
-					//写上传端点
-					memcpy(Ep2Buffer + MAX_PACKET_SIZE, &Receive_Uart_Buf[Uart_Output_Point], length);
-					Uart_Output_Point += length;
-					if(Uart_Output_Point >= UART_REV_LEN)
-						Uart_Output_Point = 0;
-					UEP2_T_LEN = length;													//预使用发送长度一定要清空
-					UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_ACK;			//应答ACK
-					UpPoint2_Busy = 1;
-				}
-			}
-		}
-#endif
 	}
 }
-
