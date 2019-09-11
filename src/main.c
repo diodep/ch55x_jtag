@@ -52,7 +52,7 @@ __code uint8_t CfgDesc[] =
 	0x09, 0x02, sizeof(CfgDesc) & 0xff, sizeof(CfgDesc) >> 8,
 	0x02, 0x01, 0x00, 0x80, 0x32,		 //配置描述符（1个接口）
 	//以下为接口0（数据接口）描述符
-	0x09, 0x04, 0x00, 0x00, 0x02, 0xff, 0xff, 0xff, 0x03,	 //数据接口描述符
+	0x09, 0x04, 0x00, 0x00, 0x02, 0xff, 0xff, 0xff, 0x04,	 //数据接口描述符
 	0x07, 0x05, 0x81, 0x02, 0x40, 0x00, 0x00,				 //端点描述符 EP1 BULK IN
 	0x07, 0x05, 0x02, 0x02, 0x40, 0x00, 0x00,				 //端点描述符 EP2 BULK OUT
 	//以下为接口1（数据接口）描述符
@@ -67,7 +67,7 @@ unsigned char  __code Prod_Des[] =								//产品字符串描述符
 {
 	sizeof(Prod_Des), 0x03,
 	'S', 0x00, 'i', 0x00, 'p', 0x00, 'e', 0x00, 'e', 0x00, 'd', 0x00,
-	'-', 0x00, 'U', 0x00, 'A', 0x00, 'R', 0x00, 'T', 0x00,
+	'-', 0x00, 'D', 0x00, 'e', 0x00, 'b', 0x00, 'u', 0x00, 'g', 0x00
 };
 unsigned char  __code Jtag_Des[] =								//产品字符串描述符
 {
@@ -87,21 +87,12 @@ volatile __idata uint8_t USBOutLength = 0;
 volatile __idata uint8_t USBOutPtr = 0;
 volatile __idata uint8_t USBReceived = 0;
 
-volatile __idata uint8_t USBRecvLen_A = 0;
-volatile __idata uint8_t USBRecvLen_B = 0;
-volatile __idata uint8_t USBRecvBuf = 0;
-volatile __idata uint8_t Serial_Done = 0;
-volatile __idata uint8_t USBBufState = 0;
-volatile __idata uint8_t SerialSendBuf = 0;
-volatile __idata uint8_t USB_Require_Data = 0;
-
 volatile __idata uint8_t USBOutLength_1 = 0;
 volatile __idata uint8_t USBOutPtr_1 = 0;
 volatile __idata uint8_t USBReceived_1 = 0;
 /* 上传控制 */
 volatile __idata uint8_t UpPoint1_Busy = 0;   //上传端点是否忙标志
-volatile __idata uint8_t UpPoint1_LenA = 2;
-volatile __idata uint8_t UpPoint1_LenB = 2;
+volatile __idata uint8_t UpPoint1_Ptr = 0;
 
 volatile __idata uint8_t UpPoint3_Busy = 0;   //上传端点是否忙标志
 
@@ -111,6 +102,11 @@ volatile __idata uint8_t Latency_Timer = 4; //Latency Timer
 volatile __idata uint8_t Latency_Timer1 = 4;
 volatile __idata uint8_t Require_DFU = 0;
 
+/* MPSSE 设置 */
+
+volatile __idata uint8_t Mpsse_Status = 0;
+volatile __idata uint16_t Mpsse_LongLen = 0;
+volatile __idata uint8_t Mpsse_ShortLen = 0;
 
 #define HARD_ESP_CTRL 1
 
@@ -189,8 +185,8 @@ void USBDeviceEndPointCfg()
 	// TODO: Is casting the right thing here? What about endianness?
 	UEP2_DMA = (uint16_t) Ep2Buffer;											//端点2 OUT接收数据传输地址
 	UEP3_DMA = (uint16_t) Ep3Buffer;
-	//UEP2_3_MOD = 0x48;															//端点2 单缓冲接收, 端点3单缓冲发送
-	UEP2_3_MOD = 0x49;				//端点3单缓冲发送,端点2双缓冲接收
+	UEP2_3_MOD = 0x48;															//端点2 单缓冲接收, 端点3单缓冲发送
+	//UEP2_3_MOD = 0x49;				//端点3单缓冲发送,端点2双缓冲接收
 
 	UEP2_CTRL = bUEP_AUTO_TOG | UEP_R_RES_ACK;									//端点2 自动翻转同步标志位，OUT返回ACK
 	UEP3_CTRL = bUEP_AUTO_TOG | UEP_T_RES_NAK; //端点3发送返回NAK
@@ -261,18 +257,9 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 			if ( U_TOG_OK )													 // 不同步的数据包将丢弃
 			{
 				UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_NAK;	   //收到一包数据就NAK，主函数处理完，由主函数修改响应方式
+				USBOutLength = USB_RX_LEN;
+				USBOutPtr = 0;
 				USBReceived = 1;
-				if(UEP2_CTRL & bUEP_R_TOG)
-				{
-					USBRecvBuf = 0; //缓冲2
-                    USBRecvLen_A = USB_RX_LEN;
-				}
-				else
-				{
-					USBRecvBuf = 1; //缓冲1
-					USBRecvLen_B = USB_RX_LEN;
-				}
-				USB_Require_Data = 0;
 			}
 			break;
 		case UIS_TOKEN_IN | 3:												  //endpoint 3# 端点批量上传
@@ -285,8 +272,8 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 			{
 				UEP4_CTRL ^= bUEP_R_TOG;	//同步标志位翻转
 				UEP4_CTRL = UEP4_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_NAK;	   //收到一包数据就NAK，主函数处理完，由主函数修改响应方式
-				USBOutPtr_1 = 64; //TODO: Nasty Solution
-				USBOutLength_1 = USB_RX_LEN + 64;
+				USBOutLength_1 = USB_RX_LEN;
+				USBOutPtr_1 = 0;
 				USBReceived_1 = 1;
 			}
 			break;
@@ -408,7 +395,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 								pDescr = Prod_Des;
 								len = sizeof(Prod_Des);
 							}
-							else if(UsbSetupBuf->wValueL == 3)
+							else if(UsbSetupBuf->wValueL == 4)
 							{
 								pDescr = Jtag_Des;
 								len = sizeof(Jtag_Des);
@@ -690,16 +677,11 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 		USBOutPtr_1 = 0;
 		USBReceived_1 = 0;
 
-		UpPoint1_LenA = 2;
-		UpPoint1_LenB = 2;
+		Mpsse_ShortLen = 0;
+		Mpsse_LongLen = 0;
 
-		USBRecvLen_A = 0;
-		USBRecvLen_B = 0;
-		USBRecvBuf = 0;
-		SerialSendBuf = 0;
-		USBBufState = 0;
-		Serial_Done = 0;
-		USB_Require_Data = 0;
+		Mpsse_Status = 0;
+		UpPoint1_Ptr = 2;
 	}
 	if (UIF_SUSPEND)																 //USB总线挂起/唤醒完成
 	{
@@ -782,17 +764,50 @@ void Xtal_Enable(void) //使能外部时钟
 void CLKO_Enable(void) //打开T2输出
 {
 	ET2 = 0;
+	T2CON = 0;
+	T2MOD = 0;
 	T2MOD |= bTMR_CLK | bT2_CLK | T2OE;
 	RCAP2H = 0xff;
-	RCAP2L = 0xff;
-	T2CON |= TR2;
+	RCAP2L = 0xfe;
+	TH2 = 0xff;
+	TL2 = 0xfe;
+	TR2 = 1;
 	P1_MOD_OC &= ~(0x01); //P1.0推挽输出
+	P1_DIR_PU |= 0x01;
 }
+
+void JTAG_IO_Config(void)
+{
+	P1_MOD_OC &= ~((1 << 4) | (1 << 5) | (1 << 7));
+	P1_DIR_PU |= ((1 << 4) | (1 << 5) | (1 << 7));
+	SCS = 0;
+	MOSI = 0;
+	MISO = 0;
+	SCK = 0;
+	/* P1.4 TMS, P1.5 TDI(MOSI), P1.7 TCK */
+	/* P1.5 TDO(MISO) */
+}
+
+#define MPSSE_IDLE			0
+#define MPSSE_RCV_LENGTH_L	1
+#define MPSSE_RCV_LENGTH_H	2
+#define MPSSE_TRANSMIT_BYTE 3
+#define MPSSE_RCV_LENGTH	4
+#define MPSSE_TRANSMIT_BIT	5
+#define MPSSE_ERROR			6
+#define MPSSE_TMS_OUT_NR	7
+#define MPSSE_TMS_OUT_NR_D	8
+#define MPSSE_NO_OP_1		9
+#define MPSSE_NO_OP_2		10
+
 
 //主函数
 main()
 {
 	uint8_t i;
+	uint8_t Purge_Buffer = 0;
+	uint8_t data, rcvdata;
+	uint8_t instr = 0;
 	volatile uint16_t Uart_Timeout = 0;
 	volatile uint16_t Uart_Timeout1 = 0;
 	uint16_t Esp_Stage = 0;
@@ -803,6 +818,7 @@ main()
 	CfgFsys( );														   //CH552时钟选择配置
 	mDelaymS(5);														  //修改主频等待内部时钟稳定,必加
 	CLKO_Enable();
+	JTAG_IO_Config();
 
 #ifdef DE_PRINTF
 	printf("start ...\n");
@@ -819,45 +835,201 @@ main()
 	Ep1Buffer[1] = 0x60;
 	Ep3Buffer[0] = 0x01;
 	Ep3Buffer[1] = 0x60;
+	UpPoint1_Ptr = 2;
 	XBUS_AUX = 0;
 	while(1)
 	{
 		if(UsbConfig)
 		{
+			if(USBReceived == 1)
+			{ //收到一包
+				if(UpPoint1_Ptr < 64 && UpPoint1_Busy == 0) /* 可以发送 */
+				{	
+						switch(Mpsse_Status)
+						{
+							case MPSSE_IDLE:
+								instr = Ep2Buffer[USBOutPtr];
+								switch(instr)
+								{
+									case 0x80:
+									case 0x82: /* 假Bit bang模式 */
+										Mpsse_Status = MPSSE_NO_OP_1;
+										USBOutPtr++;
+									break;
+									case 0x81:
+									case 0x83: /* 假状态 */
+										Ep1Buffer[UpPoint1_Ptr++] = Ep2Buffer[USBOutPtr] - 0x80;
+										USBOutPtr++;
+									break;
+									case 0x84:
+									case 0x85: /* Loopback */
+										USBOutPtr++;
+									break;
+									case 0x86: /* 调速，暂时不支持 */
+										Mpsse_Status = MPSSE_NO_OP_1;
+										USBOutPtr++;
+									break;
+									case 0x87: /* 立刻刷新缓冲 */
+										Purge_Buffer = 1;
+										USBOutPtr++;
+									break;
+									case 0x6b:
+									case 0x4b:
+										Mpsse_Status = MPSSE_TMS_OUT_NR;
+										USBOutPtr++;
+									break;
+									case 0x39:
+										Mpsse_Status = MPSSE_RCV_LENGTH_L;
+										USBOutPtr++;
+									break;
+									case 0x3b:
+									case 0x1b:
+										Mpsse_Status = MPSSE_RCV_LENGTH;
+										USBOutPtr++;
+									break;										
+									default:	/* 不支持的命令 */
+										Ep1Buffer[UpPoint1_Ptr++] = 0xfa;
+										Mpsse_Status = MPSSE_ERROR;
+									break;
+								}
+							break;
+							case MPSSE_RCV_LENGTH_L: /* 接收长度 */
+								Mpsse_LongLen = Ep2Buffer[USBOutPtr];
+								Mpsse_Status ++;
+								USBOutPtr++;
+							break;
+							case MPSSE_RCV_LENGTH_H:
+								Mpsse_LongLen |= (Ep2Buffer[USBOutPtr] << 8) & 0xff00;
+								Mpsse_Status ++;
+								USBOutPtr++;
+							break;
+							case MPSSE_TRANSMIT_BYTE:
+								data = Ep2Buffer[USBOutPtr];
+								rcvdata = 0;
+								for(i = 0; i < 8; i++)
+								{
+									SCK = 0;
+									MOSI = (data & 0x01);
+									data >>= 1;
+									rcvdata >>= 1;
+									__asm nop __endasm;
+									__asm nop __endasm;
+									SCK = 1;
+									if(MISO == 1)
+										rcvdata |= 0x80;
+									__asm nop __endasm;
+									__asm nop __endasm;
+								}
+								Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
+								USBOutPtr++;
+								if(Mpsse_LongLen == 0)
+									Mpsse_Status = MPSSE_IDLE;
+								Mpsse_LongLen --;							
+							break;
+							case MPSSE_RCV_LENGTH:
+								Mpsse_ShortLen = Ep2Buffer[USBOutPtr];
+								Mpsse_Status++;
+								USBOutPtr++;								
+							break;
+							case MPSSE_TRANSMIT_BIT:
+								data = Ep2Buffer[USBOutPtr];
+								rcvdata = 0;
+								do
+								{
+									SCK = 0;
+									MOSI = (data & 0x01);
+									data >>= 1;
+									__asm nop __endasm;
+									__asm nop __endasm;
+									SCK = 1;
+									if(MISO)
+										rcvdata |= (1 << Mpsse_ShortLen);
+									__asm nop __endasm;
+									__asm nop __endasm;
+								} while((Mpsse_ShortLen--) > 0);
+								SCK = 0;
+								if(instr == 0x3b)
+									Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
+								Mpsse_Status = MPSSE_IDLE;
+								USBOutPtr++;
+							break;
+							case MPSSE_ERROR:
+								Ep1Buffer[UpPoint1_Ptr++] = Ep2Buffer[USBOutPtr];
+								Mpsse_Status = MPSSE_IDLE;
+								USBOutPtr++;
+							break;
+							case MPSSE_TMS_OUT_NR:
+								Mpsse_ShortLen = Ep2Buffer[USBOutPtr];
+								Mpsse_Status++;
+								USBOutPtr++;
+							break;
+							case MPSSE_TMS_OUT_NR_D:
+								data = Ep2Buffer[USBOutPtr];
+								if(data & 0x80)
+									MOSI = 1;
+								else
+									MOSI = 0;
+								rcvdata = 0;
+								do
+								{
+									SCK = 0;
+									SCS = (data & 0x01);
+									data >>= 1;
+									__asm nop __endasm;
+									__asm nop __endasm;
+									SCK = 1;
+									if(MISO)
+										rcvdata |= (1 << Mpsse_ShortLen);
+									__asm nop __endasm;
+									__asm nop __endasm;
+								} while((Mpsse_ShortLen--) > 0);
+								SCK = 0;
+								if(instr == 0x6b)
+									Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
+								Mpsse_Status = MPSSE_IDLE;
+								USBOutPtr++;
+							break;
+							case MPSSE_NO_OP_1:
+								Mpsse_Status ++;
+								USBOutPtr++;
+							break;
+							case MPSSE_NO_OP_2:
+								Mpsse_Status = MPSSE_IDLE;
+								USBOutPtr++;
+							break;								
+							default:
+								Mpsse_Status = MPSSE_IDLE;
+							break;
+						}
+						
+					
+					if(USBOutPtr >= USBOutLength)
+					{ //接收完毕
+						USBReceived = 0;
+						UEP2_CTRL = UEP2_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_ACK;
+						//开放接收
+					}
+				}
+			}
+
 			if(UpPoint1_Busy == 0)
 			{
-				size = 0;
-
-				if(size >= 62)
+				if(UpPoint1_Ptr == 64)
 				{
-				#if 0
-					for(i = 0; i < 62; i++)
-					{
-						Ep1Buffer[2 + i] = RingBuf[ReadPtr++];
-						ReadPtr %= sizeof(RingBuf);
-					}
-				#endif
-
 					UpPoint1_Busy = 1;
 					UEP1_T_LEN = 64;
 					UEP1_CTRL = UEP1_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_ACK;
-
+					UpPoint1_Ptr = 2;
 				}
-				else if((uint16_t) (SOF_Count - Uart_Timeout) >= Latency_Timer) //超时
+				else if((uint16_t) (SOF_Count - Uart_Timeout) >= Latency_Timer || Purge_Buffer == 1) //超时
 				{
 					Uart_Timeout = SOF_Count;
-					if(size > 62) size = 62;
-				#if 0
-					for(i = 0; i < (uint8_t)size; i++)
-					{
-						Ep1Buffer[2 + i] = RingBuf[ReadPtr++];
-						ReadPtr %= sizeof(RingBuf);
-					}
-				#endif
 
 					UpPoint1_Busy = 1;
-					UEP1_T_LEN = 2 + size;
+					UEP1_T_LEN = UpPoint1_Ptr;
 					UEP1_CTRL = UEP1_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_ACK;			//应答ACK
+					UpPoint1_Ptr = 2;
+					Purge_Buffer = 0;
 				}
 			}
 
