@@ -795,10 +795,11 @@ void JTAG_IO_Config(void)
 #define MPSSE_RCV_LENGTH	4
 #define MPSSE_TRANSMIT_BIT	5
 #define MPSSE_ERROR			6
-#define MPSSE_TMS_OUT_NR	7
-#define MPSSE_TMS_OUT_NR_D	8
+#define MPSSE_TRANSMIT_BIT_MSB 7
+#define MPSSE_TMS_OUT		8
 #define MPSSE_NO_OP_1		9
 #define MPSSE_NO_OP_2		10
+#define MPSSE_TRANSMIT_BYTE_MSB	11
 
 
 //主函数
@@ -873,17 +874,18 @@ main()
 										Purge_Buffer = 1;
 										USBOutPtr++;
 									break;
-									case 0x6b:
-									case 0x4b:
-										Mpsse_Status = MPSSE_TMS_OUT_NR;
-										USBOutPtr++;
-									break;
+									case 0x19:
 									case 0x39:
+									case 0x11:
+									case 0x31:
 										Mpsse_Status = MPSSE_RCV_LENGTH_L;
 										USBOutPtr++;
 									break;
+									case 0x6b:
+									case 0x4b:
 									case 0x3b:
 									case 0x1b:
+									case 0x13:
 										Mpsse_Status = MPSSE_RCV_LENGTH;
 										USBOutPtr++;
 									break;										
@@ -900,7 +902,10 @@ main()
 							break;
 							case MPSSE_RCV_LENGTH_H:
 								Mpsse_LongLen |= (Ep2Buffer[USBOutPtr] << 8) & 0xff00;
-								Mpsse_Status ++;
+								if(instr == 0x11 || instr == 0x31)
+									Mpsse_Status = MPSSE_TRANSMIT_BYTE_MSB;
+								else
+									Mpsse_Status ++;
 								USBOutPtr++;
 							break;
 							case MPSSE_TRANSMIT_BYTE:
@@ -920,15 +925,45 @@ main()
 									__asm nop __endasm;
 									__asm nop __endasm;
 								}
-								Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
+								if(instr == 0x39)
+									Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
 								USBOutPtr++;
 								if(Mpsse_LongLen == 0)
 									Mpsse_Status = MPSSE_IDLE;
 								Mpsse_LongLen --;							
 							break;
+							case MPSSE_TRANSMIT_BYTE_MSB:
+								data = Ep2Buffer[USBOutPtr];
+								rcvdata = 0;
+								for(i = 0; i < 8; i++)
+								{
+									SCK = 0;
+									MOSI = (data & 0x80);
+									data <<= 1;
+									rcvdata <<= 1;
+									__asm nop __endasm;
+									__asm nop __endasm;
+									SCK = 1;
+									if(MISO == 1)
+										rcvdata |= 0x01;
+									__asm nop __endasm;
+									__asm nop __endasm;
+								}
+								if(instr == 0x33)
+									Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
+								USBOutPtr++;
+								if(Mpsse_LongLen == 0)
+									Mpsse_Status = MPSSE_IDLE;
+								Mpsse_LongLen --;								
+							break;
 							case MPSSE_RCV_LENGTH:
 								Mpsse_ShortLen = Ep2Buffer[USBOutPtr];
-								Mpsse_Status++;
+								if(instr == 0x6b || instr == 0x4b)
+									Mpsse_Status = MPSSE_TMS_OUT;
+								else if(instr == 0x13)
+									Mpsse_Status = MPSSE_TRANSMIT_BIT_MSB;
+								else
+									Mpsse_Status++;
 								USBOutPtr++;								
 							break;
 							case MPSSE_TRANSMIT_BIT:
@@ -953,17 +988,32 @@ main()
 								Mpsse_Status = MPSSE_IDLE;
 								USBOutPtr++;
 							break;
+							case MPSSE_TRANSMIT_BIT_MSB:
+								data = Ep2Buffer[USBOutPtr];
+								rcvdata = 0;
+								do
+								{
+									SCK = 0;
+									MOSI = (data & 0x80);
+									data <<= 1;
+									__asm nop __endasm;
+									__asm nop __endasm;
+									SCK = 1;
+									__asm nop __endasm;
+									__asm nop __endasm;
+								} while((Mpsse_ShortLen--) > 0);
+								SCK = 0;
+
+								Mpsse_Status = MPSSE_IDLE;
+								USBOutPtr++;
+			
+							break;
 							case MPSSE_ERROR:
 								Ep1Buffer[UpPoint1_Ptr++] = Ep2Buffer[USBOutPtr];
 								Mpsse_Status = MPSSE_IDLE;
 								USBOutPtr++;
 							break;
-							case MPSSE_TMS_OUT_NR:
-								Mpsse_ShortLen = Ep2Buffer[USBOutPtr];
-								Mpsse_Status++;
-								USBOutPtr++;
-							break;
-							case MPSSE_TMS_OUT_NR_D:
+							case MPSSE_TMS_OUT:
 								data = Ep2Buffer[USBOutPtr];
 								if(data & 0x80)
 									MOSI = 1;
