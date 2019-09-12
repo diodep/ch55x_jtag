@@ -92,9 +92,10 @@ volatile __idata uint8_t USBOutPtr_1 = 0;
 volatile __idata uint8_t USBReceived_1 = 0;
 /* 上传控制 */
 volatile __idata uint8_t UpPoint1_Busy = 0;   //上传端点是否忙标志
-volatile __idata uint8_t UpPoint1_Ptr = 0;
+volatile __idata uint8_t UpPoint1_Ptr = 2;
 
 volatile __idata uint8_t UpPoint3_Busy = 0;   //上传端点是否忙标志
+volatile __idata uint8_t UpPoint3_Ptr = 2;
 
 /* 杂项 */
 volatile __idata uint16_t SOF_Count = 0;
@@ -140,6 +141,10 @@ void Jump_to_BL()
 {
 	ES = 0;
 	PS = 0;
+
+	P1_DIR_PU = 0xff;
+	P1_MOD_OC = 0xff;	
+	P1 = 0xff;
 
 	USB_INT_EN = 0;
 	USB_CTRL = 0x06;
@@ -682,6 +687,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 
 		Mpsse_Status = 0;
 		UpPoint1_Ptr = 2;
+		UpPoint3_Ptr = 2;
 	}
 	if (UIF_SUSPEND)																 //USB总线挂起/唤醒完成
 	{
@@ -778,14 +784,16 @@ void CLKO_Enable(void) //打开T2输出
 
 void JTAG_IO_Config(void)
 {
-	P1_MOD_OC &= ~((1 << 4) | (1 << 5) | (1 << 7));
 	P1_DIR_PU |= ((1 << 4) | (1 << 5) | (1 << 7));
+	P1_DIR_PU &= ~((1 << 6));
+	P1_MOD_OC &= ~((1 << 4) | (1 << 5) | (1 << 7) | (1 << 6));
+	
 	SCS = 0;
 	MOSI = 0;
 	MISO = 0;
 	SCK = 0;
-	/* P1.4 TMS, P1.5 TDI(MOSI), P1.7 TCK */
-	/* P1.5 TDO(MISO) */
+	/* P1.4 TMS, P1.5 TDI(MOSI), P1.7 TCK PP */
+	/* P1.6 TDO(MISO) INPUT */
 }
 
 #define MPSSE_IDLE			0
@@ -801,6 +809,7 @@ void JTAG_IO_Config(void)
 #define MPSSE_NO_OP_2		10
 #define MPSSE_TRANSMIT_BYTE_MSB	11
 
+#define MPSSE_DEBUG	0
 
 //主函数
 main()
@@ -844,12 +853,19 @@ main()
 		{
 			if(USBReceived == 1)
 			{ //收到一包
-				if(UpPoint1_Ptr < 64 && UpPoint1_Busy == 0) /* 可以发送 */
+			#if MPSSE_DEBUG
+				if(UpPoint1_Ptr < 64 && UpPoint1_Busy == 0 && UpPoint3_Busy == 0 && UpPoint3_Ptr < 64) /* 可以发送 */
+			#else
+				if(UpPoint1_Ptr < 64 && UpPoint1_Busy == 0)
+			#endif
 				{	
 						switch(Mpsse_Status)
 						{
 							case MPSSE_IDLE:
 								instr = Ep2Buffer[USBOutPtr];
+			#if MPSSE_DEBUG
+								Ep3Buffer[UpPoint3_Ptr++] = instr;
+			#endif
 								switch(instr)
 								{
 									case 0x80:
@@ -925,6 +941,7 @@ main()
 									__asm nop __endasm;
 									__asm nop __endasm;
 								}
+								SCK = 0;
 								if(instr == 0x39)
 									Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
 								USBOutPtr++;
@@ -949,6 +966,7 @@ main()
 									__asm nop __endasm;
 									__asm nop __endasm;
 								}
+								SCK = 0;
 								if(instr == 0x33)
 									Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
 								USBOutPtr++;
@@ -974,11 +992,12 @@ main()
 									SCK = 0;
 									MOSI = (data & 0x01);
 									data >>= 1;
+									rcvdata >>= 1;
 									__asm nop __endasm;
 									__asm nop __endasm;
 									SCK = 1;
 									if(MISO)
-										rcvdata |= (1 << Mpsse_ShortLen);
+										rcvdata |= 0x80;//(1 << (Mpsse_ShortLen));
 									__asm nop __endasm;
 									__asm nop __endasm;
 								} while((Mpsse_ShortLen--) > 0);
@@ -1025,11 +1044,12 @@ main()
 									SCK = 0;
 									SCS = (data & 0x01);
 									data >>= 1;
+									rcvdata >>= 1;
 									__asm nop __endasm;
 									__asm nop __endasm;
 									SCK = 1;
 									if(MISO)
-										rcvdata |= (1 << Mpsse_ShortLen);
+										rcvdata |= 0x80;//(1 << (Mpsse_ShortLen));
 									__asm nop __endasm;
 									__asm nop __endasm;
 								} while((Mpsse_ShortLen--) > 0);
@@ -1085,38 +1105,23 @@ main()
 
 			if(UpPoint3_Busy == 0)
 			{
-				size = 0;
 
-				if(size >= 62)
+				if(UpPoint3_Ptr == 64)
 				{
-				#if 0
-					for(i = 0; i < 62; i++)
-					{
-						Ep3Buffer[2 + i] = RingBuf_1[ReadPtr_1++];
-						ReadPtr_1 %= sizeof(RingBuf_1);
-					}
-				#endif
 
 					UpPoint3_Busy = 1;
 					UEP3_T_LEN = 64;
 					UEP3_CTRL = UEP3_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_ACK;
-
+					UpPoint3_Ptr = 2;
 
 				}
 				else if((uint16_t) (SOF_Count - Uart_Timeout1) >= Latency_Timer1) //超时
 				{
 					Uart_Timeout1 = SOF_Count;
-					if(size > 62) size = 62;
-				#if 0
-					for(i = 0; i < (uint8_t)size; i++)
-					{
-						Ep3Buffer[2 + i] = RingBuf_1[ReadPtr_1++];
-						ReadPtr_1 %= sizeof(RingBuf_1);
-					}
-				#endif
 
 					UpPoint3_Busy = 1;
-					UEP3_T_LEN = 2 + size;
+					UEP3_T_LEN = UpPoint3_Ptr;
+					UpPoint3_Ptr = 2;
 					UEP3_CTRL = UEP3_CTRL & ~ MASK_UEP_T_RES | UEP_T_RES_ACK;			//应答ACK
 				}
 			}
