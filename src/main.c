@@ -810,7 +810,25 @@ void JTAG_IO_Config(void)
 #define MPSSE_TRANSMIT_BYTE_MSB	11
 
 #define MPSSE_DEBUG	0
+#define MPSSE_HWSPI	1
 
+void SPI_Init()
+{
+	SPI0_CK_SE = 0x02;
+	
+}
+
+#if MPSSE_HWSPI
+#define SPI_LSBFIRST() SPI0_SETUP |= bS0_BIT_ORDER
+#define SPI_MSBFIRST() SPI0_SETUP &= ~bS0_BIT_ORDER
+#define SPI_ON() SPI0_CTRL = bS0_MISO_OE | bS0_MOSI_OE | bS0_SCK_OE;
+#define SPI_OFF() SPI0_CTRL = 0;
+#else
+#define SPI_LSBFIRST()
+#define SPI_MSBFIRST()
+#define SPI_ON()
+#define SPI_OFF()
+#endif
 //主函数
 main()
 {
@@ -829,6 +847,9 @@ main()
 	mDelaymS(5);														  //修改主频等待内部时钟稳定,必加
 	CLKO_Enable();
 	JTAG_IO_Config();
+#if MPSSE_HWSPI
+	SPI_Init();
+#endif
 
 #ifdef DE_PRINTF
 	printf("start ...\n");
@@ -894,6 +915,7 @@ main()
 									case 0x39:
 									case 0x11:
 									case 0x31:
+										SPI_ON();
 										Mpsse_Status = MPSSE_RCV_LENGTH_L;
 										USBOutPtr++;
 									break;
@@ -902,6 +924,7 @@ main()
 									case 0x3b:
 									case 0x1b:
 									case 0x13:
+										SPI_OFF();
 										Mpsse_Status = MPSSE_RCV_LENGTH;
 										USBOutPtr++;
 									break;										
@@ -919,13 +942,25 @@ main()
 							case MPSSE_RCV_LENGTH_H:
 								Mpsse_LongLen |= (Ep2Buffer[USBOutPtr] << 8) & 0xff00;
 								if(instr == 0x11 || instr == 0x31)
+								{
 									Mpsse_Status = MPSSE_TRANSMIT_BYTE_MSB;
+									SPI_MSBFIRST();
+								}
 								else
+								{
 									Mpsse_Status ++;
+									SPI_LSBFIRST();
+								}
+									
 								USBOutPtr++;
 							break;
 							case MPSSE_TRANSMIT_BYTE:
 								data = Ep2Buffer[USBOutPtr];
+							#if MPSSE_HWSPI
+								SPI0_DATA = data;
+								while(S0_FREE == 0);
+								rcvdata = SPI0_DATA;
+							#else
 								rcvdata = 0;
 								for(i = 0; i < 8; i++)
 								{
@@ -942,6 +977,7 @@ main()
 									__asm nop __endasm;
 								}
 								SCK = 0;
+							#endif
 								if(instr == 0x39)
 									Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
 								USBOutPtr++;
@@ -951,6 +987,11 @@ main()
 							break;
 							case MPSSE_TRANSMIT_BYTE_MSB:
 								data = Ep2Buffer[USBOutPtr];
+							#if MPSSE_HWSPI
+								SPI0_DATA = data;
+								while(S0_FREE == 0);
+								rcvdata = SPI0_DATA;								
+							#else
 								rcvdata = 0;
 								for(i = 0; i < 8; i++)
 								{
@@ -967,7 +1008,8 @@ main()
 									__asm nop __endasm;
 								}
 								SCK = 0;
-								if(instr == 0x33)
+							#endif
+								if(instr == 0x31)
 									Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
 								USBOutPtr++;
 								if(Mpsse_LongLen == 0)
