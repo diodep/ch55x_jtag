@@ -851,7 +851,7 @@ void Run_Test_Stop()
 
 void SPI_Init()
 {
-	SPI0_CK_SE = 0x08;
+	SPI0_CK_SE = 0x04;
 	
 }
 
@@ -981,7 +981,7 @@ main()
 								Mpsse_LongLen |= (Ep2Buffer[USBOutPtr] << 8) & 0xff00;
 								USBOutPtr++;
 						#if GOWIN_INT_FLASH_QUIRK
-								if(Mpsse_LongLen == 25000 || Mpsse_LongLen == 750 || Mpsse_LongLen == 2968)
+								if((Mpsse_LongLen == 25000 || Mpsse_LongLen == 750 || Mpsse_LongLen == 2968) && (instr & (1 << 5)) == 0)
 								{
 									SPI_OFF();
 									Run_Test_Start();
