@@ -782,18 +782,52 @@ void CLKO_Enable(void) //打开T2输出
 	P1_DIR_PU |= 0x01;
 }
 
+#define TMS T2EX
+#define TDI MOSI
+#define TDO MISO
+#define TCK SCK
+#define TCK_CONT SCS
+
 void JTAG_IO_Config(void)
 {
-	P1_DIR_PU |= ((1 << 4) | (1 << 5) | (1 << 7));
-	P1_DIR_PU &= ~((1 << 6));
-	P1_MOD_OC &= ~((1 << 4) | (1 << 5) | (1 << 7) | (1 << 6));
+	P1_DIR_PU |= ((1 << 1) | (1 << 5) | (1 << 7));
+	P1_DIR_PU &= ~((1 << 6) | (1 << 4));
+	P1_MOD_OC &= ~((1 << 1) | (1 << 5) | (1 << 7) | (1 << 6) | (1 << 4));
 	
-	SCS = 0;
-	MOSI = 0;
-	MISO = 0;
-	SCK = 0;
-	/* P1.4 TMS, P1.5 TDI(MOSI), P1.7 TCK PP */
+	TMS = 0;
+	TDI = 0;
+	TDO = 0;
+	TCK = 0;
+	TCK_CONT = 0;
+	/* P1.1 TMS, P1.5 TDI(MOSI), P1.7 TCK PP */
 	/* P1.6 TDO(MISO) INPUT */
+	/* P1.4 INPUT */
+}
+
+void Run_Test_Start()
+{
+	/* P1.7 INPUT, P1.4 PP */
+	PIN_FUNC |= bT2_PIN_X;
+	P1_DIR_PU &= ~((1 << 7));
+	P1_MOD_OC &= ~((1 << 7));
+	//TCK = 1;
+
+	RCAP2L = 0xfd;
+	
+	P1_DIR_PU |= ((1 << 4));
+	P1_MOD_OC &= ~((1 << 4));
+}
+
+void Run_Test_Stop()
+{
+	P1_DIR_PU &= ~((1 << 4));
+	P1_MOD_OC &= ~((1 << 4)); // P1.4 INPUT
+
+	RCAP2L = 0xfe;
+	PIN_FUNC &= ~bT2_PIN_X;
+
+	P1_DIR_PU |= ((1 << 7));
+	P1_MOD_OC &= ~((1 << 7)); // P1.7 OUTPUT
 }
 
 #define MPSSE_IDLE			0
@@ -808,13 +842,16 @@ void JTAG_IO_Config(void)
 #define MPSSE_NO_OP_1		9
 #define MPSSE_NO_OP_2		10
 #define MPSSE_TRANSMIT_BYTE_MSB	11
+#define MPSSE_RUN_TEST	12
 
 #define MPSSE_DEBUG	0
 #define MPSSE_HWSPI	1
 
+#define GOWIN_INT_FLASH_QUIRK 1
+
 void SPI_Init()
 {
-	SPI0_CK_SE = 0x02;
+	SPI0_CK_SE = 0x08;
 	
 }
 
@@ -847,6 +884,7 @@ main()
 	mDelaymS(5);														  //修改主频等待内部时钟稳定,必加
 	CLKO_Enable();
 	JTAG_IO_Config();
+	
 #if MPSSE_HWSPI
 	SPI_Init();
 #endif
@@ -941,7 +979,18 @@ main()
 							break;
 							case MPSSE_RCV_LENGTH_H:
 								Mpsse_LongLen |= (Ep2Buffer[USBOutPtr] << 8) & 0xff00;
-								if(instr == 0x11 || instr == 0x31)
+								USBOutPtr++;
+						#if GOWIN_INT_FLASH_QUIRK
+								if(Mpsse_LongLen == 25000 || Mpsse_LongLen == 750 || Mpsse_LongLen == 2968)
+								{
+									SPI_OFF();
+									Run_Test_Start();
+									Mpsse_Status = MPSSE_RUN_TEST;
+								}
+								else if(instr == 0x11 || instr == 0x31)
+						#else
+								if (instr == 0x11 || instr == 0x31)
+						#endif
 								{
 									Mpsse_Status = MPSSE_TRANSMIT_BYTE_MSB;
 									SPI_MSBFIRST();
@@ -951,8 +1000,6 @@ main()
 									Mpsse_Status ++;
 									SPI_LSBFIRST();
 								}
-									
-								USBOutPtr++;
 							break;
 							case MPSSE_TRANSMIT_BYTE:
 								data = Ep2Buffer[USBOutPtr];
@@ -1077,25 +1124,25 @@ main()
 							case MPSSE_TMS_OUT:
 								data = Ep2Buffer[USBOutPtr];
 								if(data & 0x80)
-									MOSI = 1;
+									TDI = 1;
 								else
-									MOSI = 0;
+									TDI = 0;
 								rcvdata = 0;
 								do
 								{
-									SCK = 0;
-									SCS = (data & 0x01);
+									TCK = 0;
+									TMS = (data & 0x01);
 									data >>= 1;
 									rcvdata >>= 1;
 									__asm nop __endasm;
 									__asm nop __endasm;
 									SCK = 1;
-									if(MISO)
+									if(TDO)
 										rcvdata |= 0x80;//(1 << (Mpsse_ShortLen));
 									__asm nop __endasm;
 									__asm nop __endasm;
 								} while((Mpsse_ShortLen--) > 0);
-								SCK = 0;
+								TCK = 0;
 								if(instr == 0x6b)
 									Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
 								Mpsse_Status = MPSSE_IDLE;
@@ -1108,7 +1155,19 @@ main()
 							case MPSSE_NO_OP_2:
 								Mpsse_Status = MPSSE_IDLE;
 								USBOutPtr++;
-							break;								
+							break;
+						#if GOWIN_INT_FLASH_QUIRK
+							case MPSSE_RUN_TEST:
+								if(Mpsse_LongLen == 0)
+								{
+									Mpsse_Status = MPSSE_IDLE;
+									Run_Test_Stop();
+								}
+									
+								USBOutPtr++;
+								Mpsse_LongLen --;
+							break;
+						#endif
 							default:
 								Mpsse_Status = MPSSE_IDLE;
 							break;
