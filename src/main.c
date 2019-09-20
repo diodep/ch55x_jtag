@@ -259,6 +259,8 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 	if ((USB_INT_ST & MASK_UIS_TOKEN) == UIS_TOKEN_SOF)
 	{
 		SOF_Count ++;
+		if(SOF_Count & 0x0f == 0)
+			PWM2 = 0;
 	}
 	if(UIF_TRANSFER)															//USB传输完成标志
 	{
@@ -896,6 +898,8 @@ main()
 	mDelaymS(5);														  //修改主频等待内部时钟稳定,必加
 	CLKO_Enable();
 	JTAG_IO_Config();
+
+	PWM2 = 0;
 	
 #if MPSSE_HWSPI
 	SPI_Init();
@@ -929,7 +933,8 @@ main()
 			#else
 				if(UpPoint1_Ptr < 64 && UpPoint1_Busy == 0)
 			#endif
-				{	
+				{
+					PWM2 = !PWM2;
 						switch(Mpsse_Status)
 						{
 							case MPSSE_IDLE:
