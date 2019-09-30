@@ -153,8 +153,8 @@ void Jump_to_BL()
 	ES = 0;
 	PS = 0;
 
-	P1_DIR_PU = 0xff;
-	P1_MOD_OC = 0xff;	
+	P1_DIR_PU = 0;
+	P1_MOD_OC = 0;	
 	P1 = 0xff;
 
 	USB_INT_EN = 0;
@@ -259,7 +259,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 	if ((USB_INT_ST & MASK_UIS_TOKEN) == UIS_TOKEN_SOF)
 	{
 		SOF_Count ++;
-		if(SOF_Count & 0x0f == 0)
+		if(SOF_Count % 16 == 0)
 			PWM2 = 0;
 	}
 	if(UIF_TRANSFER)															//USB传输完成标志
@@ -708,9 +708,10 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 		UIF_SUSPEND = 0;
 		if ( USB_MIS_ST & bUMS_SUSPEND )											 //挂起
 		{
-#ifdef DE_PRINTF
+#ifdef USB_SLEEP
+	#ifdef DE_PRINTF
 			printf( "suspend\n" );															 //睡眠状态
-#endif
+	#endif
 			while ( XBUS_AUX & bUART0_TX )
 			{
 				;	//等待发送完成
@@ -722,6 +723,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 			SAFE_MOD = 0x55;
 			SAFE_MOD = 0xAA;
 			WAKE_CTRL = 0x00;
+#endif
 		}
 	}
 	else																			   //意外的中断,不可能发生的情况
@@ -770,15 +772,20 @@ void SerialPort_Config()
 
 void Xtal_Enable(void) //使能外部时钟
 {
+	USB_INT_EN = 0;
+	USB_CTRL = 0x06;
+	
 	SAFE_MOD = 0x55;
 	SAFE_MOD = 0xAA;
 	CLOCK_CFG |= bOSC_EN_XT;                          //使能外部24M晶振
 	SAFE_MOD = 0x00;
-	mDelaymS(5);
+	mDelaymS(50);
+
 	SAFE_MOD = 0x55;
 	SAFE_MOD = 0xAA;
 	CLOCK_CFG &= ~bOSC_EN_INT;                        //关闭内部RC
 	SAFE_MOD = 0x00;
+	mDelaymS(250);
 }
 
 void CLKO_Enable(void) //打开T2输出
@@ -865,7 +872,7 @@ void Run_Test_Stop()
 
 void SPI_Init()
 {
-	SPI0_CK_SE = 0x04;
+	SPI0_CK_SE = 0x06;
 	
 }
 
