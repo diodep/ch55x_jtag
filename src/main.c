@@ -900,7 +900,7 @@ main()
 	int8_t size;
 
 	
-	Xtal_Enable();	//启动振荡器
+	//Xtal_Enable();	//启动振荡器
 	CfgFsys( );														   //CH552时钟选择配置
 	mDelaymS(5);														  //修改主频等待内部时钟稳定,必加
 	CLKO_Enable();
@@ -1146,6 +1146,7 @@ main()
 								USBOutPtr++;
 							break;
 							case MPSSE_TMS_OUT:
+					#if 0
 								data = Ep2Buffer[USBOutPtr];
 								if(data & 0x80)
 									TDI = 1;
@@ -1167,6 +1168,41 @@ main()
 									__asm nop __endasm;
 								} while((Mpsse_ShortLen--) > 0);
 								TCK = 0;
+					#else
+					//CJTAG实现时序
+								data = Ep2Buffer[USBOutPtr];
+								if(data & 0x01)
+									P1_DIR_PU |= (1 << 1); // TMS OUT
+								else
+									P1_DIR_PU &= ~(1 << 1); // TMS IN
+
+								data >>= 1;
+								if(data & 0x80)
+									TMS = 1;
+								else
+									TMS = 0;
+									
+								rcvdata = 0;
+								do
+								{
+									TCK = 0;
+									if(data & 0x01)
+										P1_DIR_PU |= (1 << 1); // TMS OUT
+									else
+										P1_DIR_PU &= ~(1 << 1); // TMS IN
+									data >>= 1;
+									rcvdata >>= 1;
+									__asm nop __endasm;
+									__asm nop __endasm;
+									TCK = 1;
+									if(TMS)
+										rcvdata |= 0x80;//(1 << (Mpsse_ShortLen));
+									__asm nop __endasm;
+									__asm nop __endasm;
+								} while((Mpsse_ShortLen--) > 0);
+								TCK = 0;
+								
+					#endif
 								if(instr == 0x6b)
 									Ep1Buffer[UpPoint1_Ptr++] = rcvdata;
 								Mpsse_Status = MPSSE_IDLE;
