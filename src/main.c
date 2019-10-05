@@ -1199,6 +1199,7 @@ main()
 									__asm nop __endasm;
 									__asm nop __endasm;
 								} while((Mpsse_ShortLen--) > 0);
+								P1_DIR_PU &= ~(1 << 4); // TMS IN
 								TCK = 0;
 								
 					#endif
