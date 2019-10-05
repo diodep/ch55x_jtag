@@ -803,7 +803,7 @@ void CLKO_Enable(void) //打开T2输出
 	P1_DIR_PU |= 0x01;
 }
 
-#define TMS T2EX
+#define TMS SCS //T2EX
 #define TDI MOSI
 #define TDO MISO
 #define TCK SCK
@@ -864,11 +864,12 @@ void Run_Test_Stop()
 #define MPSSE_NO_OP_2		10
 #define MPSSE_TRANSMIT_BYTE_MSB	11
 #define MPSSE_RUN_TEST	12
+#define MPSSE_SET_IO		13
 
 #define MPSSE_DEBUG	0
 #define MPSSE_HWSPI	1
 
-#define GOWIN_INT_FLASH_QUIRK 1
+//#define GOWIN_INT_FLASH_QUIRK 1
 
 void SPI_Init()
 {
@@ -952,6 +953,9 @@ main()
 								switch(instr)
 								{
 									case 0x80:
+										Mpsse_Status = MPSSE_SET_IO;
+										USBOutPtr++;
+									break;
 									case 0x82: /* 假Bit bang模式 */
 										Mpsse_Status = MPSSE_NO_OP_1;
 										USBOutPtr++;
@@ -1171,12 +1175,7 @@ main()
 					#else
 					//CJTAG实现时序
 								data = Ep2Buffer[USBOutPtr];
-								if(data & 0x01)
-									P1_DIR_PU |= (1 << 1); // TMS OUT
-								else
-									P1_DIR_PU &= ~(1 << 1); // TMS IN
-
-								data >>= 1;
+								P1_DIR_PU &= ~(1 << 4); // TMS IN
 								if(data & 0x80)
 									TMS = 1;
 								else
@@ -1187,9 +1186,9 @@ main()
 								{
 									TCK = 0;
 									if(data & 0x01)
-										P1_DIR_PU |= (1 << 1); // TMS OUT
+										P1_DIR_PU |= (1 << 4); // TMS OUT
 									else
-										P1_DIR_PU &= ~(1 << 1); // TMS IN
+										P1_DIR_PU &= ~(1 << 4); // TMS IN
 									data >>= 1;
 									rcvdata >>= 1;
 									__asm nop __endasm;
@@ -1228,6 +1227,25 @@ main()
 								Mpsse_LongLen --;
 							break;
 						#endif
+							case MPSSE_SET_IO:
+								data = Ep2Buffer[USBOutPtr];
+								if(data & 0x08)
+									P1_DIR_PU |= (1 << 4); // TMS OUT
+								else
+									P1_DIR_PU &= ~(1 << 4); // TMS IN
+								
+								if(data & 0x02)
+									TMS = 1;
+								else
+									TMS = 0;
+								
+								if(data & 0x01)
+									TCK = 1;
+								else
+									TCK = 0;
+								USBOutPtr++;
+								Mpsse_Status = MPSSE_NO_OP_2;
+							break;
 							default:
 								Mpsse_Status = MPSSE_IDLE;
 							break;
