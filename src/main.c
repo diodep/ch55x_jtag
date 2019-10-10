@@ -260,7 +260,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 	{
 		SOF_Count ++;
 		if(SOF_Count % 16 == 0)
-			PWM2 = 0;
+			PWM2 = 1;
 	}
 	if(UIF_TRANSFER)															//USB传输完成标志
 	{
@@ -781,10 +781,10 @@ void Xtal_Enable(void) //使能外部时钟
 	SAFE_MOD = 0x00;
 	mDelaymS(50);
 
-	SAFE_MOD = 0x55;
-	SAFE_MOD = 0xAA;
-	CLOCK_CFG &= ~bOSC_EN_INT;                        //关闭内部RC
-	SAFE_MOD = 0x00;
+//	SAFE_MOD = 0x55;
+//	SAFE_MOD = 0xAA;
+//	CLOCK_CFG &= ~bOSC_EN_INT;                        //关闭内部RC
+//	SAFE_MOD = 0x00;
 	mDelaymS(250);
 }
 
@@ -906,7 +906,7 @@ main()
 	CLKO_Enable();
 	JTAG_IO_Config();
 
-	PWM2 = 0;
+	PWM2 = 1;
 	
 #if MPSSE_HWSPI
 	SPI_Init();
@@ -929,6 +929,7 @@ main()
 	Ep3Buffer[1] = 0x60;
 	UpPoint1_Ptr = 2;
 	XBUS_AUX = 0;
+	T1 = 0;
 	while(1)
 	{
 		if(UsbConfig)
