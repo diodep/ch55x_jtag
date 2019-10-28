@@ -330,8 +330,8 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 			{
 				UEP4_CTRL ^= bUEP_R_TOG;	//同步标志位翻转
 				UEP4_CTRL = UEP4_CTRL & ~ MASK_UEP_R_RES | UEP_R_RES_NAK;	   //收到一包数据就NAK，主函数处理完，由主函数修改响应方式
-				USBOutLength_1 = USB_RX_LEN;
-				USBOutPtr_1 = 0;
+				USBOutLength_1 = USB_RX_LEN + 64;
+				USBOutPtr_1 = 64;
 				USBReceived_1 = 1;
 			}
 			break;
@@ -411,9 +411,11 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 							break;
 						case 0x03:
 							//divisor = wValue
-							U1SMOD = 1;
-							PCON |= SMOD; //波特率加倍
-							T2MOD |= bTMR_CLK; //最高计数时钟
+							//U1SMOD = 1;
+							//PCON |= SMOD; //波特率加倍
+							//T2MOD |= bTMR_CLK; //最高计数时钟
+							PCON |= SMOD;
+							T2MOD |= bT1_CLK;
 
 							divisor = UsbSetupBuf->wValueL |
 									  (UsbSetupBuf->wValueH << 8);
@@ -436,15 +438,15 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 									//TH1 = 0 - SBAUD_TH; //统统使用预设波特率
 									if(UsbSetupBuf->wIndexL == 2)
 									{
-										divisor /= 8;
+										divisor /= 12;
 										if(divisor > 256) //设置波特率小于488
 										{
 											TH1 = 0 - SBAUD_TH; //9600bps
 										}
 										else
 										{
-											PCON &= ~(SMOD);
-											T2MOD &= ~(bTMR_CLK); //低波特率
+											//PCON &= ~(SMOD);
+											T2MOD &= ~(bT1_CLK); //低波特率
 											TH1 = 0 - divisor;
 										}
 									}
