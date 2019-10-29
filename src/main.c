@@ -1201,6 +1201,7 @@ main()
 	SerialPort_Config();
 
 	PWM2 = 1;
+	T1 = 0;
 	
 #if MPSSE_HWSPI
 	SPI_Init();
