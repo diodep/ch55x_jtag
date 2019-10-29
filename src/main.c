@@ -46,7 +46,8 @@ USB_SETUP_REQ   SetupReqBuf;												   //暂存Setup包
 #define SBAUD_SET		128000U	// 串口0的波特率
 
 /*设备描述符*/
-__code uint8_t DevDesc[] = {0x12, 0x01, 0x10, 0x01, 0x00, 0x00, 0x00, DEFAULT_ENDP0_SIZE,
+__code uint8_t DevDesc[] = {0x12, 0x01, 0x00, 0x02, 
+							0x00, 0x00, 0x00, DEFAULT_ENDP0_SIZE,
 							0x03, 0x04, 0x10, 0x60, 0x00, 0x05, 0x01, 0x02,
 							0x03, 0x01
 						   };
@@ -94,6 +95,22 @@ unsigned char  __code Manuf_Des[] =
 	sizeof(Manuf_Des), 0x03,
 	'K', 0x00, 'o', 0x00, 'n', 0x00, 'g', 0x00, 'o', 0x00, 'u', 0x00,
 	' ', 0x00, 'H', 0x00, 'i', 0x00, 'k', 0x00, 'a', 0x00, 'r', 0x00, 'i', 0x00
+};
+
+__code uint8_t QualifierDesc[]=
+{
+	10,             	/* bLength */
+	USB_DESCR_TYP_QUALIF,	/* bDescriptorType */
+
+	0x00, 0x02, 		  /*bcdUSB */
+
+	0xff,                              /* bDeviceClass */
+	0xff,                              /* bDeviceSubClass */
+	0xff,                              /* bDeviceProtocol */
+
+	DEFAULT_ENDP0_SIZE,                   /* bMaxPacketSize0 */
+	0x00,                              /* bNumOtherSpeedConfigurations */
+	0x00                               /* bReserved */
 };
 
 /* 下载控制 */
@@ -518,15 +535,15 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 					case USB_GET_DESCRIPTOR:
 						switch(UsbSetupBuf->wValueH)
 						{
-						case 1:													   //设备描述符
+						case USB_DESCR_TYP_DEVICE:													   //设备描述符
 							pDescr = DevDesc;										 //把设备描述符送到要发送的缓冲区
 							len = sizeof(DevDesc);
 							break;
-						case 2:														//配置描述符
+						case USB_DESCR_TYP_CONFIG:														//配置描述符
 							pDescr = CfgDesc;										  //把设备描述符送到要发送的缓冲区
 							len = sizeof(CfgDesc);
 							break;
-						case 3:
+						case USB_DESCR_TYP_STRING:
 							if(UsbSetupBuf->wValueL == 0)
 							{
 								pDescr = LangDes;
@@ -553,6 +570,11 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 								len = 22; /* 10位ASCII序列号 */
 							}
 							break;
+						case USB_DESCR_TYP_QUALIF:
+							//pDescr = QualifierDesc;
+							//len = sizeof(QualifierDesc);
+							len = 0xff;
+							break;
 						default:
 							len = 0xff;												//不支持的命令或者出错
 							break;
@@ -562,17 +584,21 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 						{
 							SetupLen = len;	//限制总长度
 						}
-						len = SetupLen >= DEFAULT_ENDP0_SIZE ? DEFAULT_ENDP0_SIZE : SetupLen;							//本次传输长度
-						if(pDescr == (__code uint8_t *) 0xffff) /* 取序列号的话 */
+						if (len != 0xff)
 						{
-							uuidcpy(Ep0Buffer, 0, len);
-						}
-						else
-						{
+							len = SetupLen >= DEFAULT_ENDP0_SIZE ? DEFAULT_ENDP0_SIZE : SetupLen;							//本次传输长度
+					
+							if(pDescr == (__code uint8_t *) 0xffff) /* 取序列号的话 */
+							{
+								uuidcpy(Ep0Buffer, 0, len);
+							}
+							else
+							{
 							memcpy(Ep0Buffer, pDescr, len);								//加载上传数据
+							}
+							SetupLen -= len;
+							pDescr_Index = len;
 						}
-						SetupLen -= len;
-						pDescr_Index = len;
 						break;
 					case USB_SET_ADDRESS:
 						SetupLen = UsbSetupBuf->wValueL;							  //暂存USB设备地址
@@ -658,6 +684,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 										;	//等待发送完成
 									}
 #endif
+#if 0
 									SAFE_MOD = 0x55;
 									SAFE_MOD = 0xAA;
 									WAKE_CTRL = bWAK_BY_USB | bWAK_RXD0_LO | bWAK_RXD1_LO;					  //USB或者RXD0/1有信号时可被唤醒
@@ -665,6 +692,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程�
 									SAFE_MOD = 0x55;
 									SAFE_MOD = 0xAA;
 									WAKE_CTRL = 0x00;
+#endif
 								}
 								else
 								{
