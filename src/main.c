@@ -928,6 +928,8 @@ void SerialPort_Config()
 	PS = 1; //中断优先级最高
 }
 
+//#define SWITCH_TO_CRYSTAL 1
+
 void Xtal_Enable(void) //使能外部时钟
 {
 	USB_INT_EN = 0;
@@ -938,11 +940,12 @@ void Xtal_Enable(void) //使能外部时钟
 	CLOCK_CFG |= bOSC_EN_XT;                          //使能外部24M晶振
 	SAFE_MOD = 0x00;
 	mDelaymS(50);
-
-//	SAFE_MOD = 0x55;
-//	SAFE_MOD = 0xAA;
-//	CLOCK_CFG &= ~bOSC_EN_INT;                        //关闭内部RC
-//	SAFE_MOD = 0x00;
+#if SWITCH_TO_CRYSTAL
+	SAFE_MOD = 0x55;
+	SAFE_MOD = 0xAA;
+	CLOCK_CFG &= ~bOSC_EN_INT;                        //关闭内部RC
+	SAFE_MOD = 0x00;
+#endif
 	mDelaymS(250);
 }
 
@@ -1181,6 +1184,187 @@ void SPI_Init()
 #define SPI_OFF()
 #endif
 //主函数
+
+void Shift_IR(uint8_t ir, uint8_t len)
+{ /* 开始状态必须是RTI */
+	int i;
+	/* SLD */
+	TCK = 0;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	TMS = 1;
+	TCK = 1;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	/* SLI */
+	TCK = 0;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	TMS = 1;
+	TCK = 1;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	/* CIR */
+	TCK = 0;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	TMS = 0;
+	TCK = 1;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	/* SIR */
+	TCK = 0;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	TMS = 0;
+	TCK = 1;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	for(i = 0; i < len; i++)
+	{
+		TCK = 0;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		TDI = ir & 0x01;
+		ir >>= 1;
+		if(i == (len - 1))
+			TMS = 1;
+		else
+			TMS = 0;
+		TCK = 1;	
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;	
+	}
+	/* E1I */
+	TCK = 0;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	TMS = 1;
+	TCK = 1;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	/* UIR */
+	TCK = 0;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	TMS = 0;
+	TCK = 1;	
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+}
+
+void Run_Test(uint32_t t)
+{
+	while(t--)
+	{
+		TCK = 0;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		TCK = 1;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;		
+	}
+}
+
+void Unbrick_FPGA()
+{
+	uint32_t i;
+	SPI_OFF();
+	RXD = 0;
+	mDelaymS(5);
+	RXD = 1;
+	for(i = 0; i < 5; i++)
+	{ /* 发送5个1选择TLR */
+		TCK = 0;
+		TMS = 1;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		TCK = 1;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	}
+
+	/* 选择RTI */
+	TCK = 0;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	TMS = 0;
+	TCK = 1;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+	//Shift_IR(0x11, 8);
+	//Run_Test(8);
+	//Shift_IR(0x41, 8);
+	//Run_Test(8);
+	//mDelaymS(5);
+	Shift_IR(0x15, 8);
+	Run_Test(8);
+	Shift_IR(0x05, 8);
+	Run_Test(8);
+	Shift_IR(0x02, 8);
+	Run_Test(8);
+	mDelaymS(1);
+	/* RUN TEST */
+#if 0
+	for(i = 0; i < 3200000UL; i++)
+	{
+		TCK = 0;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		TMS = 0;
+		TCK = 1;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;
+		__asm nop __endasm;		
+	}
+#endif
+	Shift_IR(0x3A, 8);
+	Shift_IR(0x02, 8);
+}
+
 main()
 {
 	uint8_t i;
@@ -1192,12 +1376,13 @@ main()
 	uint16_t Esp_Stage = 0;
 	// int8_t size;
 
-	
+	JTAG_IO_Config();
+	Unbrick_FPGA();
 	Xtal_Enable();	//启动振荡器
 	CfgFsys( );														   //CH552时钟选择配置
 	mDelaymS(5);														  //修改主频等待内部时钟稳定,必加
 	CLKO_Enable();
-	JTAG_IO_Config();
+	
 	SerialPort_Config();
 
 	PWM2 = 1;
@@ -1302,7 +1487,8 @@ main()
 								Mpsse_LongLen |= (Ep2Buffer[USBOutPtr] << 8) & 0xff00;
 								USBOutPtr++;
 						#if GOWIN_INT_FLASH_QUIRK
-								if((Mpsse_LongLen == 25000 || Mpsse_LongLen == 750 || Mpsse_LongLen == 2968) && (instr & (1 << 5)) == 0)
+								if((Mpsse_LongLen == 25000 || Mpsse_LongLen == 750 || Mpsse_LongLen == 2968 || 
+									Mpsse_LongLen == 38 || Mpsse_LongLen == 30 || Mpsse_LongLen == 600 || Mpsse_LongLen == 2375 || Mpsse_LongLen == 20000) && (instr & (1 << 5)) == 0)
 								{
 									SPI_OFF();
 									Run_Test_Start();
