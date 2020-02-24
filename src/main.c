@@ -74,8 +74,8 @@ __code uint16_t itdf_eeprom [] =
 __code uint8_t CfgDesc[] =
 {
 	0x09, 0x02, sizeof(CfgDesc) & 0xff, sizeof(CfgDesc) >> 8,
-	0x02, 0x01, 0x00, 0x80, 0x32,		 //配置描述符（1个接口）
-	//以下为接口0（数据接口）描述符
+	0x02, 0x01, 0x00, 0x80, 0x32,		 //Configuration descriptor (1 interface)
+	//The following is the interface 0 (data interface) descriptor
 	0x09, 0x04, 0x00, 0x00, 0x02, 0xff, 0xff, 0xff, 0x04,	 //数据接口描述符
 	0x07, 0x05, 0x81, 0x02, 0x40, 0x00, 0x00,				 //端点描述符 EP1 BULK IN
 	0x07, 0x05, 0x02, 0x02, 0x40, 0x00, 0x00,				 //端点描述符 EP2 BULK OUT
@@ -227,7 +227,7 @@ void USBDeviceIntCfg()
 }
 /*******************************************************************************
 * Function Name  : USBDeviceEndPointCfg()
-* Description	: USB设备模式端点配置，模拟兼容HID设备，除了端点0的控制传输，还包括端点2批量上下传
+* Description	: USB device mode endpoint configuration, simulation compatible HID device, in addition to endpoint 0 control transmission, also includes endpoint 2 batch upload and download
 * Input		  : None
 * Output		 : None
 * Return		 : None
@@ -295,9 +295,9 @@ volatile __idata uint8_t Modem_Count = 0;
 
 /*******************************************************************************
 * Function Name  : DeviceInterrupt()
-* Description	: CH559USB中断处理函数
+* Description	: CH559USB interrupt handler
 *******************************************************************************/
-void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB中断服务程序,使用寄存器组1
+void DeviceInterrupt(void) __interrupt (INT_NO_USB)					   //USB interrupt service routine, using register set 1
 {
 	uint16_t len;
 	uint16_t divisor;
@@ -939,27 +939,27 @@ void SerialPort_Config()
 	PS = 1; //中断优先级最高
 }
 
-void Xtal_Enable(void) //使能外部时钟
+void Xtal_Enable(void) //Enable external clock using xtal crystal
 {
 	USB_INT_EN = 0;
 	USB_CTRL = 0x06;
 	
 	SAFE_MOD = 0x55;
 	SAFE_MOD = 0xAA;
-	CLOCK_CFG |= bOSC_EN_XT;                          //使能外部24M晶振
+	CLOCK_CFG |= bOSC_EN_XT;                       //Enable external 24M crystal oscillator
 	SAFE_MOD = 0x00;
 	mDelaymS(50);
 
 //	SAFE_MOD = 0x55;
 //	SAFE_MOD = 0xAA;
-//	CLOCK_CFG &= ~bOSC_EN_INT;                        //关闭内部RC
+//	CLOCK_CFG &= ~bOSC_EN_INT;                        //Turn off internal RC
 //	SAFE_MOD = 0x00;
 	mDelaymS(250);
 }
 
 /*******************************************************************************
 * Function Name  : Uart0_ISR()
-* Description	: 串口接收中断函数，实现循环缓冲接收
+* Description	: Serial port receive interrupt function to achieve circular buffer reception
 *******************************************************************************/
 
 //Ring Buf
@@ -980,7 +980,7 @@ __code uint8_t ESP_Boot_Sequence[] =
 
 #define FAST_RECEIVE
 
-#ifndef FAST_RECEIVE /* 年久失修的代码,不要维护了 */
+#ifndef FAST_RECEIVE /* Old disrepair code, don't maintain it anymore */
 void Uart0_ISR(void) __interrupt (INT_NO_UART0) __using 1
 {	
 	if(RI)   //收到数据
@@ -1025,7 +1025,7 @@ void Uart0_ISR(void) __interrupt (INT_NO_UART0) __using 1
 }
 #else
 
-//汇编接收数据，选择寄存器组1，DPTR1 1.5M~150kHz~160 cycles
+//Assemble receive data, select register group 1，DPTR1 1.5M~150kHz~160 cycles
 void Uart0_ISR(void) __interrupt (INT_NO_UART0) __using 1 __naked
 {
 	__asm
@@ -1092,7 +1092,7 @@ ISR_End:
 //#define FAST_COPY_2
 //#define FAST_COPY_1
 
-void CLKO_Enable(void) //打开T2输出
+void CLKO_Enable(void) //Turn on T2 output
 {
 	ET2 = 0;
 	T2CON = 0;
@@ -1103,7 +1103,7 @@ void CLKO_Enable(void) //打开T2输出
 	TH2 = 0xff;
 	TL2 = 0xfe;
 	TR2 = 1;
-	P1_MOD_OC &= ~(0x01); //P1.0推挽输出
+	P1_MOD_OC &= ~(0x01); //P1.0 push-pull output
 	P1_DIR_PU |= 0x01;
 }
 
@@ -1489,12 +1489,12 @@ main()
 								switch(instr)
 								{
 									case 0x80:
-									case 0x82: /* 假Bit bang模式 */
+									case 0x82: /* Fake Bit bang mode*/
 										Mpsse_Status = MPSSE_NO_OP_1;
 										USBOutPtr++;
 									break;
 									case 0x81:
-									case 0x83: /* 假状态 */
+									case 0x83: /* False state */
 										Ep1Buffer[UpPoint1_Ptr++] = Ep2Buffer[USBOutPtr] - 0x80;
 										USBOutPtr++;
 									break;

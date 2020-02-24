@@ -28,6 +28,7 @@ Boards
 --------------
 
 Sipeed Lichee Tang Nano.
+Simple JTAG
 
 Build
 --------------
@@ -50,5 +51,10 @@ Authors
 --------------
 
 Kongou Hikari <kongouhikari@qq.com>
+
+Translations by 
+--------------
+Rabid Inventor 
+
 
 
