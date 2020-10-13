@@ -1392,6 +1392,8 @@ void mTimer0Interrupt(void) __interrupt (INT_NO_TMR0)                          /
 			INTF1_RTS = 1;
 		}
 	}
+	if(SOF_Count % 16 == 0)
+		PWM2 = 1;
 }
 
 void init_timer() {
