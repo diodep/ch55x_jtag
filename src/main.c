@@ -386,7 +386,7 @@ void DeviceInterrupt(void) __interrupt (INT_NO_USB) {				// USB interrupt servic
 										if(UsbSetupBuf->wIndexL == 2) {
 											divisor /= 12;
 											if(divisor > 256) { // Set the baud rate to be less than 488
-												TH1 = 0 - SBAUD_TH; // 9600bps
+												TH1 = (0 - SBAUD_TH)&0xff; // 9600bps
 											} else {
 												// PCON &= ~(SMOD);
 												T2MOD &= ~(bT1_CLK); // low baud rate
