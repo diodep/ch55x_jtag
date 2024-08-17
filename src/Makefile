@@ -14,8 +14,11 @@ FREQ_SYS = 16000000
 
 EXTRA_FLAGS = --opt-code-speed
 
-C_FILES = \
-	main.c \
+C_FILES = 	\
+	main.c	\
+	hal.c	\
+	uart.c	\
+	spi.c	\
 	../ch554_sdcc/include/debug.c
 
 include ../ch554_sdcc/examples/Makefile.include
