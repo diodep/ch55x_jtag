@@ -11,7 +11,7 @@ Serial port is working but with some limitation. Because the CPU is running at 1
 Pin layout
 --------------
 
-P1.0 - TMS
+P1.1 - TMS
 
 P1.4 & P1.7 - TCK
 
